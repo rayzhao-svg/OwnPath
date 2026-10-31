@@ -3,7 +3,7 @@ import type { LessonDetailRequest } from "@/lib/types";
 import { ApiFailure, assertLesson, assertModule, errorResponse, readJsonBody } from "@/lib/validation";
 
 export const runtime = "nodejs";
-export const maxDuration = 90;
+export const maxDuration = 60;
 const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
 
 function parseRequest(value: unknown): LessonDetailRequest {

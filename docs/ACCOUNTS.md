@@ -19,6 +19,10 @@ Use a writable **persistent local volume** when deploying. Keep the SQLite datab
 
 Use HTTPS in production. Production session cookies carry `Secure`, so an ordinary insecure production origin cannot establish the intended browser session. Never expose the database path or server credentials through `NEXT_PUBLIC_` variables.
 
+### Vercel deployment
+
+Vercel deployments run in guest mode because function filesystems do not provide the durable SQLite storage required by accounts. When `VERCEL=1`, the account page explains browser-only persistence, account creation and sign-in return `503 ACCOUNTS_UNAVAILABLE`, and stale session cookies cannot open the database. Sign-out still clears the browser cookie. Guest paths, lessons, quizzes, and progress remain in localStorage for the current browser and site origin; clearing that storage removes them. Cross-device account sync requires a shared database implementation or a Node host with a persistent disk. Local deployments retain the existing SQLite account behavior.
+
 ## Authentication and session behavior
 
 Registration accepts a name of 1–100 characters, an email address of at most 254 characters, and a password of 12–128 characters. Email identifiers are trimmed and lowercased. Passwords retain their exact characters.

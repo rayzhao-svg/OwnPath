@@ -6,6 +6,7 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { MAX_ACCOUNT_STATE_BYTES, MAX_ACCOUNT_TRACKS } from "@/lib/account-types";
 import type { AccountTrack, AccountTrackSummary, AccountUser } from "@/lib/account-types";
+import { accountsAvailable } from "@/lib/account-availability";
 import { parseLearningState } from "@/lib/learning-state";
 import { MAX_STORED_LESSON_BYTES } from "@/lib/lesson-budget";
 import type { LearningState } from "@/lib/types";
@@ -27,6 +28,9 @@ const storage = globalThis as typeof globalThis & {
 };
 
 function database(): DatabaseSync {
+  if (!accountsAvailable()) {
+    throw new AccountFailure(503, "ACCOUNTS_UNAVAILABLE", "Accounts are unavailable on this site. Continue as a guest; your learning is saved in this browser.");
+  }
   const filename = process.env.OWNPATH_DATABASE_PATH === ":memory:"
     ? ":memory:" : resolve(process.env.OWNPATH_DATABASE_PATH || ".data/ownpath.sqlite");
   const connections = storage.__ownpathAccountDatabases ??= new Map();
@@ -190,6 +194,7 @@ export function createAccountSession(userId: string): string {
 }
 
 export function findAccountSession(token: string | null): AccountUser | null {
+  if (!accountsAvailable()) return null;
   if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
   const row = database().prepare(`
     SELECT u.id, u.name, u.email FROM account_sessions s
@@ -200,6 +205,7 @@ export function findAccountSession(token: string | null): AccountUser | null {
 }
 
 export function deleteAccountSession(token: string | null): void {
+  if (!accountsAvailable()) return;
   if (token && /^[A-Za-z0-9_-]{43}$/.test(token)) database().prepare("DELETE FROM account_sessions WHERE token_hash = ?").run(hash(token));
 }
 

@@ -17,7 +17,7 @@ import {
 } from "@/lib/validation";
 
 export const runtime = "nodejs";
-export const maxDuration = 75;
+export const maxDuration = 60;
 
 const REVIEW_SCHEMA = {
   type: "object",

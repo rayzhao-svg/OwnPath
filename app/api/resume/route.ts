@@ -7,7 +7,7 @@ import {
 } from "@/lib/resume";
 
 export const runtime = "nodejs";
-export const maxDuration = 75;
+export const maxDuration = 60;
 
 async function boundedBody(request: Request, maxBytes: number): Promise<Uint8Array> {
   const declared = Number(request.headers.get("content-length"));
