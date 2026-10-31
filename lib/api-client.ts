@@ -9,14 +9,19 @@ import type {
   Module,
   PlanRequest,
   PlanResponse,
+  QuizRefreshRequest,
+  QuizRefreshResponse,
   StudyPlan,
   TutorMessage,
 } from "@/lib/types";
 import { assertLesson, assertStudyPlan } from "@/lib/validators";
+import { assertQuizRefreshResponse, DEFAULT_QUIZ_QUESTION_COUNT, isQuizQuestionCount } from "@/lib/quiz-refresh";
 
 async function post<TRequest, TResponse>(
   url: string,
   body: TRequest,
+  signal?: AbortSignal,
+  timeoutMs = 30_000,
 ): Promise<TResponse> {
   let response: Response;
   try {
@@ -24,7 +29,7 @@ async function post<TRequest, TResponse>(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     throw new Error(
@@ -81,12 +86,55 @@ export async function requestLessonResponse(module: Module): Promise<LessonRespo
     throw new Error("The lesson did not match this module. Please try again.");
   return response;
 }
+
+export async function requestLessonDetailResponse(
+  lesson: Lesson,
+  module: Module,
+  signal?: AbortSignal,
+): Promise<LessonResponse> {
+  const body = { lesson, module };
+  if (new TextEncoder().encode(JSON.stringify(body)).byteLength > 60 * 1024)
+    throw new Error("This saved lesson is too large to expand. You can continue with its existing explanation.");
+  const response = await post<typeof body, LessonResponse>("/api/lesson/detail", body, signal, 55_000);
+  assertMode(response?.mode);
+  assertLesson(response.lesson);
+  if (response.lesson.id !== lesson.id || response.lesson.moduleId !== lesson.moduleId ||
+      response.lesson.moduleId !== module.id || response.lesson.title !== lesson.title ||
+      response.lesson.title !== module.title || response.lesson.slides.length !== lesson.slides.length ||
+      response.lesson.slides.some((slide, index) => slide.id !== lesson.slides[index].id ||
+        slide.title !== lesson.slides[index].title ||
+        JSON.stringify(slide.bullets) !== JSON.stringify(lesson.slides[index].bullets) ||
+        !slide.scenes?.length) || JSON.stringify(response.lesson.quiz) !== JSON.stringify(lesson.quiz))
+    throw new Error("The expanded explanation did not match this saved lesson. Please try again.");
+  return response;
+}
 export async function requestTutor(
   lesson: Lesson,
   question: string,
   messages: TutorMessage[],
 ): Promise<TutorMessage> {
   return (await requestTutorResponse(lesson, question, messages)).message;
+}
+
+export async function requestQuizRefreshResponse(
+  lesson: Lesson,
+  previousQuestions: string[],
+  questionCount = DEFAULT_QUIZ_QUESTION_COUNT,
+  signal?: AbortSignal,
+): Promise<QuizRefreshResponse> {
+  if (!isQuizQuestionCount(questionCount))
+    throw new Error("Choose a whole number of questions between 5 and 10.");
+  const body: QuizRefreshRequest = { lesson, previousQuestions: previousQuestions.slice(-60), questionCount };
+  const bytes = () => new TextEncoder().encode(JSON.stringify(body)).byteLength;
+  while (body.previousQuestions.length && bytes() > 60 * 1024)
+    body.previousQuestions = body.previousQuestions.slice(1);
+  if (bytes() > 60 * 1024)
+    throw new Error("This lesson is too large to create a new quiz. Try reloading the lesson.");
+  const response = await post<QuizRefreshRequest, QuizRefreshResponse>(
+    "/api/quiz", body, signal, 55_000,
+  );
+  assertQuizRefreshResponse(response, lesson, previousQuestions, questionCount);
+  return response;
 }
 export async function requestTutorResponse(
   lesson: Lesson,

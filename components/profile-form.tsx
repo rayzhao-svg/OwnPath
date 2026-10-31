@@ -6,41 +6,13 @@ import { Icon } from "@/components/icon";
 import { ResumeReview, ResumeSuggestion, ResumeUpload } from "@/components/resume-upload";
 import { useLearning } from "@/lib/learning-context";
 import { requestPlanResponse } from "@/lib/api-client";
-import type { LearnerProfile, LearningTrack } from "@/lib/types";
+import { inferLearningTrack } from "@/lib/learning-track";
+import type { LearnerProfile } from "@/lib/types";
 import type { ResumeResult } from "@/lib/resume";
-
-const tracks: {
-  id: LearningTrack;
-  title: string;
-  detail: string;
-  icon: "layers" | "book" | "sparkles";
-}[] = [
-  {
-    id: "data-science",
-    title: "Data science",
-    detail: "Find the story in the numbers",
-    icon: "layers",
-  },
-  {
-    id: "web-development",
-    title: "Web development",
-    detail: "Bring your ideas to the browser",
-    icon: "book",
-  },
-  {
-    id: "product-design",
-    title: "Product design",
-    detail: "Create things people love to use",
-    icon: "sparkles",
-  },
-];
 
 function ProfileFields() {
   const { state, setPlan } = useLearning();
   const router = useRouter();
-  const [track, setTrack] = useState<LearningTrack>(
-    state.profile?.track || "data-science",
-  );
   const [hours, setHours] = useState(state.profile?.availableStudyTime || 5);
   const [details, setDetails] = useState({
     background: state.profile?.background || "",
@@ -90,6 +62,7 @@ function ProfileFields() {
       return;
     }
     const fields = new FormData(event.currentTarget);
+    const goals = String(fields.get("goals") || "").trim();
     const profile: LearnerProfile = {
       id: state.profile?.id || crypto.randomUUID(),
       name: String(fields.get("name") || "").trim(),
@@ -99,9 +72,9 @@ function ProfileFields() {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
-      goals: String(fields.get("goals") || "").trim(),
+      goals,
       availableStudyTime: hours,
-      track,
+      track: inferLearningTrack(goals, state.profile?.track),
     };
     if (!profile.name || !profile.background || !profile.goals) {
       setError(
@@ -154,36 +127,9 @@ function ProfileFields() {
           <ResumeUpload disabled={busy} onExtracted={acceptResume} onBusyChange={setResumeBusy} />
           <fieldset disabled={busy}>
             <legend>
-              <span>01</span> Where do you want to go?
+              <span>01</span>{" "}
+              <label htmlFor="goals">What would you love to be able to do?</label>
             </legend>
-            <p className="field-hint">
-              Pick a direction. Your goal will make it more specific.
-            </p>
-            <div className="track-options">
-              {tracks.map((item) => (
-                <label
-                  key={item.id}
-                  className={`track-option ${track === item.id ? "selected" : ""}`}
-                >
-                  <input
-                    type="radio"
-                    name="track"
-                    value={item.id}
-                    checked={track === item.id}
-                    onChange={() => setTrack(item.id)}
-                  />
-                  <Icon name={item.icon} size={22} />
-                  <strong>{item.title}</strong>
-                  <small>{item.detail}</small>
-                  <span className="track-check">
-                    {track === item.id && <Icon name="check" size={11} />}
-                  </span>
-                </label>
-              ))}
-            </div>
-            <label className="field-label" htmlFor="goals">
-              What would you love to be able to do?
-            </label>
             <textarea
               id="goals"
               name="goals"
@@ -345,8 +291,8 @@ function ProfileFields() {
         <div className="aside-divider" />
         <span className="eyebrow">GOOD TO KNOW</span>
         <p className="aside-small">
-          Explore three subjects with a path shaped by your background, goals,
-          and study time. Your lessons and progress stay in this browser.
+          Your goal shapes a path around your background and study time.
+          Your lessons and progress stay in this browser.
         </p>
       </aside>
     </div>

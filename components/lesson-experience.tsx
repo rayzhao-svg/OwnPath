@@ -7,9 +7,12 @@ import { Icon } from "@/components/icon";
 import { LectureChat } from "@/components/lecture-chat";
 import { LecturePlayer } from "@/components/lecture-player";
 import { Quiz } from "@/components/quiz";
-import { requestLessonResponse } from "@/lib/api-client";
+import { requestLessonDetailResponse, requestLessonResponse, requestQuizRefreshResponse } from "@/lib/api-client";
 import { useLearning } from "@/lib/learning-context";
-import { assertAttemptForLesson, assertReviewResponse, createMockReview, diagnoseMistakes } from "@/lib/remediation";
+import { DEFAULT_QUIZ_QUESTION_COUNT, isQuizQuestionCount } from "@/lib/quiz-refresh";
+import { resourcesForLesson } from "@/lib/lesson-resources";
+import { assertLessonRequestBudget } from "@/lib/lesson-budget";
+import { assertAttemptForLesson, assertReviewResponse, createMockReview, diagnoseMistakes, lessonForAttempt } from "@/lib/remediation";
 import type { Lesson, LessonResponse, QuizResult, ReviewResponse } from "@/lib/types";
 import "@/app/learn/lesson.css";
 
@@ -32,13 +35,20 @@ async function requestReview(lesson: Lesson, result: QuizResult): Promise<Review
 }
 
 export function LessonExperience({ moduleId }: { moduleId: string }) {
-  const { state, ready, saveLesson, startModule, recordQuizResult, saveRemediation, markRemediationReviewed } =
+  const { state, ready, saveLesson, updateLessonTeaching, startModule, recordQuizResult, replaceQuiz, saveRemediation, markRemediationReviewed } =
     useLearning();
   const [loadError, setLoadError] = useState<{ key: string; message: string } | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [detailStatus, setDetailStatus] = useState({ key: "", busy: false, error: "" });
+  const detailRequest = useRef<{ controller: AbortController; key: string } | null>(null);
+  const attemptedDetails = useRef(new Set<string>());
   const [slidePosition, setSlidePosition] = useState({ key: "", index: 0 });
   const [tutorBusy, setTutorBusy] = useState(false);
   const [quizRetry, setQuizRetry] = useState(0);
+  const [quizSettings, setQuizSettings] = useState({ key: "", count: DEFAULT_QUIZ_QUESTION_COUNT });
+  const [quizRefresh, setQuizRefresh] = useState({ key: "", busy: false, error: "" });
+  const quizRequest = useRef<{ controller: AbortController; key: string } | null>(null);
+  const seenQuestions = useRef(new Map<string, string[]>());
   const [loadingReview, setLoadingReview] = useState<string | null>(null);
   const reviewRequests = useRef(new Map<string, Promise<ReviewResponse>>());
   const reviewQuestionRef = useRef<((question: string) => void) | null>(null);
@@ -49,11 +59,18 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
     (item) => item.id === moduleId,
   );
   const lesson = state.lessons[moduleId];
+  const latestLesson = useRef(lesson);
+  useEffect(() => { latestLesson.current = lesson; }, [lesson]);
   const lessonMode = state.lessonModes?.[moduleId];
   const requestKey = `${state.planGeneration}:${state.plan?.id}:${moduleId}`;
   const lessonKey = `${requestKey}:${lesson?.id}`;
+  const questionCount = quizSettings.key === lessonKey ? quizSettings.count
+    : lesson && isQuizQuestionCount(lesson.quiz.length) ? lesson.quiz.length : DEFAULT_QUIZ_QUESTION_COUNT;
   const slideIndex = slidePosition.key === lessonKey ? slidePosition.index : 0;
   const error = loadError?.key === requestKey ? loadError.message : "";
+  const detailBusy = detailStatus.key === lessonKey && detailStatus.busy;
+  const detailError = detailStatus.key === lessonKey ? detailStatus.error : "";
+  const needsDetail = !!lesson && lesson.slides.some((slide) => !slide.scenes?.length);
   const latestCandidate = state.latestQuizResults
     ? state.latestQuizResults[moduleId] : state.quizResults[moduleId];
   let latestResult: QuizResult | undefined;
@@ -68,8 +85,93 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
     storedReview?.review.attemptedAt === latestResult?.completedAt ? storedReview : undefined;
   const reviewKey = `${lessonKey}:${latestResult?.completedAt}:${JSON.stringify(latestResult?.answers)}`;
   const reviewBusy = loadingReview === reviewKey;
+  const quizBusy = quizRefresh.key === lessonKey && quizRefresh.busy;
+  const quizError = quizRefresh.key === lessonKey ? quizRefresh.error : "";
+  const diagnosticLesson = lesson && latestResult ? lessonForAttempt(lesson, latestResult) : lesson;
+  const needsFreshQuiz = !!lesson && !!latestResult && diagnosticLesson?.quiz.every(
+    (question, index) => question.id === lesson.quiz[index]?.id,
+  );
   const moduleIndex =
     state.plan?.modules.findIndex((item) => item.id === moduleId) ?? -1;
+
+  useEffect(() => () => {
+    quizRequest.current?.controller.abort();
+    quizRequest.current = null;
+    if (detailRequest.current) attemptedDetails.current.delete(detailRequest.current.key);
+    detailRequest.current?.controller.abort();
+    detailRequest.current = null;
+  }, [lessonKey]);
+
+  const expandLesson = useCallback(async () => {
+    if (!lesson || !currentModule || currentModule.status === "locked" || detailRequest.current || quizRequest.current) return;
+    const ticket = { controller: new AbortController(), key: lessonKey };
+    detailRequest.current = ticket;
+    attemptedDetails.current.add(lessonKey);
+    setDetailStatus({ key: lessonKey, busy: true, error: "" });
+    try {
+      const response = await requestLessonDetailResponse(lesson, currentModule, ticket.controller.signal);
+      if (ticket.controller.signal.aborted || detailRequest.current !== ticket) return;
+      const current = latestLesson.current;
+      if (!current || current.id !== lesson.id) return;
+      assertLessonRequestBudget({ ...current, slides: response.lesson.slides });
+      pauseNarration();
+      updateLessonTeaching(response.lesson, response.mode, state.plan?.id, state.planGeneration);
+      setDetailStatus({ key: lessonKey, busy: false, error: "" });
+    } catch (cause) {
+      if (ticket.controller.signal.aborted || detailRequest.current !== ticket) return;
+      setDetailStatus({ key: lessonKey, busy: false, error: cause instanceof Error
+        ? cause.message : "The expanded explanation could not load. You can continue with the saved lesson." });
+    } finally {
+      if (detailRequest.current === ticket) detailRequest.current = null;
+    }
+  }, [lesson, currentModule, lessonKey, pauseNarration, updateLessonTeaching, state.plan, state.planGeneration]);
+
+  useEffect(() => {
+    if (!ready || !needsDetail || !currentModule || currentModule.status === "locked" || quizBusy ||
+        attemptedDetails.current.has(lessonKey)) return;
+    let active = true;
+    // Strict Mode's first effect is cleaned up before starting a provider call.
+    queueMicrotask(() => { if (active) void expandLesson(); });
+    return () => { active = false; };
+  }, [ready, needsDetail, currentModule, lessonKey, expandLesson, quizBusy]);
+
+  const refreshQuestions = useCallback(async (reviewAttempt?: string) => {
+    if (!lesson || quizRequest.current) return;
+    if (detailRequest.current) {
+      setQuizRefresh({ key: lessonKey, busy: false, error: "Wait for lesson details to finish, then generate your new questions." });
+      return;
+    }
+    const ticket = { controller: new AbortController(), key: lessonKey };
+    quizRequest.current = ticket;
+    pauseNarration();
+    setQuizRefresh({ key: lessonKey, busy: true, error: "" });
+    const history = state.quizHistory?.[moduleId] ?? [];
+    const previousQuestions = [...new Set([
+      ...history.flatMap((result) => result.questions?.map((question) => question.question) ?? []),
+      ...(seenQuestions.current.get(lessonKey) ?? []),
+      ...(latestResult?.questions?.map((question) => question.question) ?? []),
+      ...lesson.quiz.map((question) => question.question),
+    ])].slice(-60);
+    try {
+      const response = await requestQuizRefreshResponse(lesson, previousQuestions, questionCount, ticket.controller.signal);
+      if (ticket.controller.signal.aborted || quizRequest.current !== ticket) return;
+      const current = latestLesson.current;
+      if (!current || current.id !== lesson.id) return;
+      assertLessonRequestBudget({ ...current, quiz: response.quiz });
+      replaceQuiz(lesson.id, moduleId, response.quiz, state.plan?.id, state.planGeneration);
+      seenQuestions.current.set(lessonKey, [...previousQuestions, ...response.quiz.map((question) => question.question)].slice(-60));
+      if (reviewAttempt) markRemediationReviewed(moduleId, reviewAttempt);
+      setQuizRetry((value) => value + 1);
+      setQuizRefresh({ key: lessonKey, busy: false, error: "" });
+      requestAnimationFrame(() => document.getElementById("knowledge-check")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    } catch (cause) {
+      if (ticket.controller.signal.aborted || quizRequest.current !== ticket) return;
+      setQuizRefresh({ key: lessonKey, busy: false, error: cause instanceof Error ? cause.message : "New questions could not be created. Please try again." });
+      requestAnimationFrame(() => document.getElementById("knowledge-check")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    } finally {
+      if (quizRequest.current === ticket) quizRequest.current = null;
+    }
+  }, [lesson, lessonKey, questionCount, moduleId, state.quizHistory, state.plan, state.planGeneration, latestResult, replaceQuiz, markRemediationReviewed, pauseNarration]);
 
   useEffect(() => {
     if (!ready || !currentModule || currentModule.status === "locked" || lesson)
@@ -238,6 +340,13 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
               </div>
             ) : (
               <>
+                {detailBusy && <p className="lecture-notice" role="status">Preparing a more detailed lesson… You can keep learning while it loads.</p>}
+                {detailError && (
+                  <div className="tutor-error" role="alert">
+                    <p>{detailError}</p>
+                    <button type="button" disabled={quizBusy || detailBusy} onClick={() => { void expandLesson(); }}>Retry expanded explanation</button>
+                  </div>
+                )}
                 <div className="lesson-main-grid">
                   <LecturePlayer
                     key={`player-${lessonKey}`}
@@ -277,7 +386,7 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
                         <div className="quiz-review">
                           <ul>
                             {savedReview.review.areas.map((area) => {
-                              const question = lesson.quiz.find((item) => item.id === area.questionId);
+                              const question = diagnosticLesson?.quiz.find((item) => item.id === area.questionId);
                               return (
                                 <li key={area.questionId}>
                                   <h3>{area.concept}</h3>
@@ -297,12 +406,11 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
                           </ul>
                         </div>
                         <div className="quiz-result-actions">
-                          <button className="button button-primary" type="button" onClick={() => {
-                            markRemediationReviewed(moduleId, savedReview.review.attemptedAt);
-                            setQuizRetry((value) => value + 1);
-                            document.getElementById("knowledge-check")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                          <button className="button button-primary" type="button" disabled={quizBusy || (needsFreshQuiz && detailBusy)} aria-busy={quizBusy} onClick={() => {
+                            if (needsFreshQuiz) void refreshQuestions(savedReview.review.attemptedAt);
+                            else document.getElementById("knowledge-check")?.scrollIntoView({ behavior: "smooth", block: "start" });
                           }}>
-                            {savedReview.reviewedAt ? "Return to the knowledge check" : "I’ve reviewed — try the knowledge check"}
+                            {quizBusy ? "Writing new questions…" : needsFreshQuiz && detailBusy ? "Preparing lesson details…" : needsFreshQuiz ? "I’ve reviewed — try new questions" : "Return to the knowledge check"}
                             <Icon name="arrow-right" size={16} />
                           </button>
                         </div>
@@ -320,6 +428,14 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
                     previousResult={state.quizResults[moduleId]}
                     latestResult={latestResult}
                     onComplete={(result) => recordQuizResult(result, state.plan?.id, state.planGeneration)}
+                    onRetry={() => { void refreshQuestions(); }}
+                    questionCount={questionCount}
+                    onQuestionCountChange={(count) => {
+                      if (isQuizQuestionCount(count)) setQuizSettings({ key: lessonKey, count });
+                    }}
+                    retryBusy={quizBusy}
+                    generationBlocked={detailBusy}
+                    retryError={quizError}
                     reviewBusy={reviewBusy}
                     onReviewWeakAreas={(result) => {
                       pauseNarration();
@@ -342,7 +458,7 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
                     <p className="muted">
                       A starting point for a curious mind.
                     </p>
-                    {currentModule.resources.map((resource) => (
+                    {resourcesForLesson(lesson, currentModule, state.plan?.track).map((resource) => (
                       <a
                         key={resource.id}
                         href={resource.url}

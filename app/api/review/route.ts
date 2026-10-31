@@ -5,6 +5,7 @@ import {
   assertReviewResponse,
   createMockReview,
   diagnoseMistakes,
+  lessonForAttempt,
 } from "@/lib/remediation";
 import type { ReviewRequest, ReviewResponse } from "@/lib/types";
 import {
@@ -49,7 +50,7 @@ function parseReviewRequest(value: unknown): ReviewRequest {
   assertAttemptForLesson(body.lesson, body.result, true);
   if (!diagnoseMistakes(body.lesson, body.result).length)
     throw new ApiFailure("VALIDATION_ERROR", "A targeted review needs at least one missed question.");
-  return { lesson: body.lesson, result: body.result };
+  return { lesson: lessonForAttempt(body.lesson, body.result), result: body.result };
 }
 
 async function generateReview(input: ReviewRequest): Promise<ReviewResponse> {

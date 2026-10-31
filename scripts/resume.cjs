@@ -435,10 +435,21 @@ async function formJourneys(result) {
   equal(find(preserved.tree, node => node.type === 'ResumeReview').props.reviewed, false, 'A second extraction requires review again');
   preserved.review(true);
   await preserved.submit({ name: previous.name, goals: previous.goals });
-  equal(preserved.sent[0].track, previous.track, 'Resume does not guess a learning track');
+  equal(preserved.sent[0].track, previous.track, 'The existing goal preserves its learning direction after resume extraction');
   equal(preserved.sent[0].availableStudyTime, previous.availableStudyTime, 'Resume preserves chosen weekly study time');
   equal(preserved.sent[0].goals, previous.goals, 'Resume preserves learning goal');
   equal(preserved.sent[0].id, previous.id, 'Profile identity survives resume integration');
+
+  const webGoal = harness();
+  webGoal.edit('background', 'Statistics degree and experience analyzing data');
+  await webGoal.submit({ name: 'Jordan', goals: 'Build accessible websites with React' });
+  equal(webGoal.sent[0].track, 'web-development', 'The goal supplies a new learner’s direction without a track selector');
+  equal(webGoal.saved[0][1].track, 'web-development', 'The saved curriculum follows the direction inferred from the goal');
+
+  const changedGoal = harness(previous);
+  await changedGoal.submit({ name: previous.name, goals: 'Move into product design and user research' });
+  equal(changedGoal.sent[0].track, 'product-design', 'An updated goal overrides the previous learning direction');
+  equal(changedGoal.saved[0][0].track, 'product-design', 'The updated learner profile retains the goal’s direction');
 
   const pending = harness();
   pending.edit('background', 'Manual background');

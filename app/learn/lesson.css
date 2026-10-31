@@ -75,7 +75,7 @@
   padding: 26px 32px 23px;
   border-radius: 14px 14px 0 0;
   position: relative;
-  overflow: hidden;
+  overflow: clip;
 }
 .lecture-slide::after {
   content: "";
@@ -172,6 +172,180 @@
   position: relative;
   z-index: 1;
 }
+.teaching-content {
+  padding: 25px 0 20px;
+}
+.teaching-content h2 {
+  font-size: clamp(23px, 2.3vw, 30px);
+  margin-bottom: 22px;
+  max-width: none;
+}
+.teaching-scene-heading > span {
+  color: #bfd39e;
+  font-size: 8px;
+  letter-spacing: 1.5px;
+}
+.teaching-scene-heading h3 {
+  color: #eff5e8;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.5;
+  margin: 8px 0 15px;
+}
+.teaching-visual {
+  border: 1px solid #69845b;
+  border-radius: 10px;
+  background: #293f2d;
+  overflow: hidden;
+  animation: teaching-enter 350ms ease both;
+}
+.teaching-visual-label {
+  display: block;
+  padding: 11px 14px;
+  color: #b5cba1;
+  font-size: 8px;
+  letter-spacing: 1.3px;
+  text-transform: uppercase;
+  border-bottom: 1px solid #4d6747;
+}
+.teaching-visual-lines {
+  padding: 9px;
+  display: grid;
+  gap: 5px;
+}
+.teaching-visual-line {
+  padding: 9px 11px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1.65;
+  transition: background 300ms ease, color 300ms ease, border-color 300ms ease;
+  overflow-wrap: anywhere;
+}
+.teaching-line-number {
+  color: #abc58d;
+  font-size: 9px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.teaching-visual-line > :last-child {
+  min-width: 0;
+}
+.teaching-visual-line.is-active {
+  background: #49673f;
+  color: #f6ffeb;
+  border-color: #8fac6e;
+}
+.teaching-visual-line.is-complete {
+  color: #d9e8c9;
+}
+.teaching-visual-line.is-next {
+  color: #aebda5;
+}
+.teaching-visual-code code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+.teaching-visual-calculation .teaching-visual-line {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.teaching-visual-comparison .teaching-visual-lines {
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+}
+.teaching-visual-comparison .teaching-visual-line {
+  border-color: #4d6747;
+}
+.teaching-caption {
+  margin-top: 20px;
+  min-height: 100px;
+}
+.teaching-caption > span {
+  color: #b6c7a7;
+  font-size: 8px;
+  letter-spacing: 1.2px;
+}
+.teaching-caption p {
+  font-size: 14px;
+  line-height: 1.85;
+  color: #f1f6ea;
+  overflow-wrap: anywhere;
+  margin: 9px 0 14px;
+  animation: teaching-enter 300ms ease both;
+}
+.teaching-step-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #536c4b;
+}
+.teaching-step-controls > button {
+  border: 0;
+  background: transparent;
+  color: #e3edd7;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  font: inherit;
+  font-size: 10px;
+  padding: 7px 0;
+  cursor: pointer;
+}
+.teaching-step-controls > button:disabled {
+  color: #91a486;
+  cursor: default;
+}
+.teaching-step-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  justify-content: center;
+}
+.teaching-step-dots button {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+}
+.teaching-step-dots button::after {
+  content: "";
+  display: block;
+  width: 7px;
+  height: 7px;
+  margin: auto;
+  border: 1px solid #91aa76;
+  border-radius: 50%;
+}
+.teaching-step-dots button[aria-current]::after {
+  background: #d4e8a0;
+  border-color: #d4e8a0;
+}
+.teaching-step-controls button:focus-visible {
+  outline: 2px solid #d4e8a0;
+  outline-offset: 4px;
+}
+.teaching-transcript-part h3 {
+  font-size: 13px;
+  color: #455a3d;
+  margin: 18px 0 5px;
+}
+@keyframes teaching-enter {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .teaching-visual, .teaching-caption p { animation: none; }
+  .teaching-visual-line { transition: none; }
+}
 .lecture-controls {
   background: #fff;
   border: 1px solid #e2e6dc;
@@ -194,10 +368,26 @@
   flex-shrink: 0;
   cursor: pointer;
 }
+.lecture-play:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.narration-reconnect {
+  display: block;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
 .lecture-playback-info {
   display: grid;
   gap: 3px;
   flex: 1;
+  min-width: 0;
 }
 .lecture-playback-info strong {
   font-size: 11px;
@@ -207,8 +397,10 @@
 .lecture-playback-info > span {
   font-size: 9px;
   color: #8b9385;
+  overflow-wrap: anywhere;
 }
-.lecture-speed select {
+.lecture-speed select,
+.lecture-voice select {
   color: #59674f;
   background: #f6f7f2;
   border: 1px solid #e2e6dc;
@@ -216,6 +408,22 @@
   padding: 4px 6px;
   font-size: 10px;
   cursor: pointer;
+}
+.lecture-voice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 22px 14px;
+  background: #fff;
+  border: 1px solid #e2e6dc;
+  border-top: 0;
+  font-size: 10px;
+  color: #59674f;
+}
+.lecture-voice select {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
 }
 .lecture-icon-button {
   border: 0;
@@ -303,7 +511,7 @@
   color: #939b8c;
   font-size: 9px;
 }
-.lecture-transcript > p {
+.lecture-transcript p {
   color: #6d7765;
   font-size: 12px;
   line-height: 1.85;
@@ -595,6 +803,43 @@
   justify-content: center;
   align-items: center;
   flex-shrink: 0;
+}
+.quiz-settings {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding-bottom: 22px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid #e9ede2;
+}
+.quiz-settings label {
+  display: grid;
+  gap: 8px;
+  color: #657654;
+  font-size: 11px;
+}
+.quiz-settings select {
+  min-width: 150px;
+  padding: 10px 32px 10px 12px;
+  border: 1px solid #dce4d0;
+  border-radius: 7px;
+  background: #f9fbf5;
+  color: #455a3d;
+  font: inherit;
+  cursor: pointer;
+}
+.quiz-settings select:focus-visible {
+  outline: 2px solid #789658;
+  outline-offset: 3px;
+}
+.quiz-settings select:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+.quiz-setup-copy {
+  font-size: 12px;
+  line-height: 1.8;
 }
 .quiz-question {
   border: 0;
@@ -1007,6 +1252,9 @@
   .lecture-controls {
     padding: 13px;
     gap: 10px;
+  }
+  .lecture-voice {
+    padding: 0 13px 13px;
   }
   .lecture-playback-info strong {
     font-size: 10px;

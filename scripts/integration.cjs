@@ -139,18 +139,43 @@ async function fullFlow() {
   equal(calls.at(-1).payload.history[1].content, chatted.data.message.content, 'History retains tutor answer');
   equal(calls.at(-1).payload.currentSlide.id, lesson.slides[1].id, 'Current slide updates');
   check(!calls.at(-1).payload.question.includes('[OwnPath slide:'), 'Internal prefix stays outside learner question');
-  testProgress(plan, lesson);
+  await testProgress(plan, lesson);
   return { plan, lesson };
 }
-function testProgress(plan, lesson) {
+async function testProgress(plan, lesson) {
   const { LearningProvider, restoreForTest } = load('lib/learning-context.tsx');
   const { Quiz } = load('components/quiz.tsx');
   const initial = { version: 1, profile, plan: clone(plan), lessons: { [lesson.moduleId]: lesson }, quizResults: {} };
-  const providerState = [initial, true, null], quizState = [];
+  const providerState = [initial, true, null];
+  let quizState = [];
   let provider = render(LearningProvider, { children: null }, providerState);
-  const props = { lesson, onComplete: provider.props.value.recordQuizResult };
+  const props = {
+    lesson, onComplete: provider.props.value.recordQuizResult,
+    async onRetry() {
+      // Exercise the real bounded quiz endpoint without making a provider call.
+      const configuredKey = process.env.ANTHROPIC_API_KEY;
+      try {
+        delete process.env.ANTHROPIC_API_KEY;
+        const generated = await post('quiz', { lesson, previousQuestions: lesson.quiz.map(question => question.question), questionCount: 5 });
+        equal(generated.status, 200, 'Quiz setup generates a valid fresh assessment');
+        equal(generated.data.quiz.length, 5, 'Quiz setup honors the five-question minimum');
+        provider.props.value.replaceQuiz(lesson.id, lesson.moduleId, generated.data.quiz, plan.id);
+      } finally {
+        if (configuredKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+        else process.env.ANTHROPIC_API_KEY = configuredKey;
+      }
+    },
+  };
   let quiz = render(Quiz, props, quizState);
-  for (const question of lesson.quiz) {
+  equal(find(quiz, node => node.type === 'form').length, 0, 'Initial three-question content is gated by quiz setup');
+  const generate = find(quiz, node => node.type === 'button' && node.props.onClick === props.onRetry)[0];
+  check(generate, 'Quiz setup offers generation instead of a legacy assessment form');
+  await generate.props.onClick();
+  provider = render(LearningProvider, { children: null }, providerState);
+  props.lesson = provider.props.value.state.lessons[lesson.moduleId];
+  quizState = []; // Successful generation remounts the assessment with empty answers.
+  quiz = render(Quiz, props, quizState);
+  for (const question of props.lesson.quiz) {
     const answer = find(quiz, node => node.type === 'input').find(node => node.props.name === question.id && Number(node.props.value) === question.correctAnswer);
     answer.props.onChange(); quiz = render(Quiz, props, quizState);
   }
@@ -161,7 +186,7 @@ function testProgress(plan, lesson) {
   equal(state.plan.modules[0].status, 'completed', 'Actual state marks completion');
   equal(state.plan.modules[1].status, 'not-started', 'Actual state unlocks successor');
   const restored = restoreForTest(JSON.stringify(state));
-  check(restored !== null, 'Browser state restores generated plan'); equal(restored.lessons[lesson.moduleId], lesson, 'Generated lesson persists');
+  check(restored !== null, 'Browser state restores generated plan'); equal(restored.lessons[lesson.moduleId], props.lesson, 'Generated five-question lesson persists');
   equal(restored.quizResults[lesson.moduleId].score, 100, 'Quiz result persists');
 }
 async function fallbacksAndFailures(lesson) {

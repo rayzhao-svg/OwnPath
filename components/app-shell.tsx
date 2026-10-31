@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Brand } from "@/components/brand";
+import { ClaudeCredit } from "@/components/claude-credit";
 import { Icon } from "@/components/icon";
 import { useLearning } from "@/lib/learning-context";
 
@@ -22,7 +23,10 @@ export function AppShell({
   return (
     <div className="app-layout">
       <aside className="app-sidebar">
-        <Brand small />
+        <div className="sidebar-brand">
+          <Brand small />
+          <ClaudeCredit />
+        </div>
         <div className="workspace-label">YOUR LEARNING SPACE</div>
         <nav className="app-nav" aria-label="Main navigation">
           <Link

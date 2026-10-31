@@ -178,7 +178,7 @@ export function ResumeReview({ reviewed, onChange, disabled }: {
         <input id="resume-reviewed" type="checkbox" checked={reviewed} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
         <span>I reviewed and corrected the resume information in my profile.</span>
       </label>
-      <p>Check education, experience, and skills above, then confirm to create your path. Your goal, track, and weekly study time remain your choices.</p>
+      <p>Check education, experience, and skills above, then confirm to create your path. Your goal and weekly study time remain your choices.</p>
     </div>
   );
 }
