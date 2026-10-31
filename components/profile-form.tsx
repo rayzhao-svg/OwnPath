@@ -3,9 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { ResumeReview, ResumeSuggestion, ResumeUpload } from "@/components/resume-upload";
 import { useLearning } from "@/lib/learning-context";
 import { requestPlanResponse } from "@/lib/api-client";
 import type { LearnerProfile, LearningTrack } from "@/lib/types";
+import type { ResumeResult } from "@/lib/resume";
 
 const tracks: {
   id: LearningTrack;
@@ -40,6 +42,14 @@ function ProfileFields() {
     state.profile?.track || "data-science",
   );
   const [hours, setHours] = useState(state.profile?.availableStudyTime || 5);
+  const [details, setDetails] = useState({
+    background: state.profile?.background || "",
+    experience: state.profile?.experience || "",
+    skills: state.profile?.skills.join(", ") || "",
+  });
+  const [resume, setResume] = useState<ResumeResult | null>(null);
+  const [resumeBusy, setResumeBusy] = useState(false);
+  const [resumeReviewed, setResumeReviewed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = useRef(false);
@@ -47,16 +57,45 @@ function ProfileFields() {
 
   useEffect(() => () => { requestGeneration.current += 1; }, []);
 
+  function acceptResume(result: ResumeResult) {
+    setResume(result);
+    setResumeReviewed(false);
+    // Resolve against the latest values, including edits made during extraction.
+    setDetails((current) => ({
+      background: current.background.trim() ? current.background : result.profile.background,
+      experience: current.experience.trim() ? current.experience : result.profile.experience,
+      skills: current.skills.trim() ? current.skills : result.profile.skills.join(", "),
+    }));
+    setError(null);
+  }
+
+  function editDetail(field: keyof typeof details, value: string) {
+    setDetails((current) => ({ ...current, [field]: value }));
+    setResumeReviewed(false);
+  }
+
+  function suggestion(field: keyof typeof details, label: string) {
+    if (!resume) return null;
+    const value = field === "skills" ? resume.profile.skills.join(", ") : resume.profile[field];
+    return <ResumeSuggestion label={label} value={value} disabled={busy} onReplace={() => editDetail(field, value)} />;
+  }
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending.current) return;
+    if (resumeBusy || (resume && !resumeReviewed)) {
+      setError(resumeBusy
+        ? "Wait for resume processing to finish, or cancel it to continue manually."
+        : "Review the resume information in your profile and confirm before creating your path.");
+      return;
+    }
     const fields = new FormData(event.currentTarget);
     const profile: LearnerProfile = {
       id: state.profile?.id || crypto.randomUUID(),
       name: String(fields.get("name") || "").trim(),
-      background: String(fields.get("background") || "").trim(),
-      experience: String(fields.get("experience") || "").trim(),
-      skills: String(fields.get("skills") || "")
+      background: details.background.trim(),
+      experience: details.experience.trim(),
+      skills: details.skills
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
@@ -68,6 +107,10 @@ function ProfileFields() {
       setError(
         "Add your name, background, and goal so we can shape your path.",
       );
+      return;
+    }
+    if (profile.skills.length > 30 || profile.skills.some((skill) => skill.length > 100)) {
+      setError("Use up to 30 skills, with at most 100 characters per skill.");
       return;
     }
     pending.current = true;
@@ -108,7 +151,8 @@ function ProfileFields() {
           </p>
         </div>
         <form className="profile-form" onSubmit={submit}>
-          <fieldset>
+          <ResumeUpload disabled={busy} onExtracted={acceptResume} onBusyChange={setResumeBusy} />
+          <fieldset disabled={busy}>
             <legend>
               <span>01</span> Where do you want to go?
             </legend>
@@ -150,7 +194,7 @@ function ProfileFields() {
               placeholder="e.g. Use data to make better business decisions and move into an analyst role."
             />
           </fieldset>
-          <fieldset>
+          <fieldset disabled={busy}>
             <legend>
               <span>02</span> What are you bringing with you?
             </legend>
@@ -173,14 +217,17 @@ function ProfileFields() {
                 <label className="field-label" htmlFor="background">
                   Academic background
                 </label>
-                <input
+                <textarea
                   id="background"
                   name="background"
                   required
                   maxLength={2000}
-                  defaultValue={state.profile?.background}
+                  rows={3}
+                  value={details.background}
+                  onChange={(event) => editDetail("background", event.target.value)}
                   placeholder="e.g. Bachelor’s in business"
                 />
+                {suggestion("background", "academic background")}
               </div>
             </div>
             <label className="field-label" htmlFor="experience">
@@ -191,9 +238,11 @@ function ProfileFields() {
               name="experience"
               maxLength={2000}
               rows={3}
-              defaultValue={state.profile?.experience}
+              value={details.experience}
+              onChange={(event) => editDetail("experience", event.target.value)}
               placeholder="A role, a project, or something you’ve taught yourself. It all counts."
             />
+            {suggestion("experience", "experience")}
             <label className="field-label" htmlFor="skills">
               Skills you already have <span>(optional)</span>
             </label>
@@ -201,7 +250,8 @@ function ProfileFields() {
               id="skills"
               name="skills"
               maxLength={1000}
-              defaultValue={state.profile?.skills.join(", ")}
+              value={details.skills}
+              onChange={(event) => editDetail("skills", event.target.value)}
               placeholder="e.g. Excel, Python, project management"
               aria-describedby="skills-help"
             />
@@ -209,8 +259,9 @@ function ProfileFields() {
               Separate skills with commas. We’ll use these to set your starting
               point.
             </small>
+            {suggestion("skills", "skills")}
           </fieldset>
-          <fieldset>
+          <fieldset disabled={busy}>
             <legend>
               <span>03</span> Make room for your real life.
             </legend>
@@ -236,6 +287,7 @@ function ProfileFields() {
               <span>40 hours · all in</span>
             </div>
           </fieldset>
+          {resume && <ResumeReview reviewed={resumeReviewed} disabled={busy || resumeBusy} onChange={setResumeReviewed} />}
           {error && (
             <p className="form-error" role="alert">
               {error}
@@ -249,7 +301,7 @@ function ProfileFields() {
             <button
               type="submit"
               className="button button-primary"
-              disabled={busy}
+              disabled={busy || resumeBusy || (!!resume && !resumeReviewed)}
             >
               {busy
                 ? "Mapping your next steps…"

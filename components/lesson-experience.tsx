@@ -9,16 +9,38 @@ import { LecturePlayer } from "@/components/lecture-player";
 import { Quiz } from "@/components/quiz";
 import { requestLessonResponse } from "@/lib/api-client";
 import { useLearning } from "@/lib/learning-context";
-import type { LessonResponse } from "@/lib/types";
+import { assertAttemptForLesson, assertReviewResponse, createMockReview, diagnoseMistakes } from "@/lib/remediation";
+import type { Lesson, LessonResponse, QuizResult, ReviewResponse } from "@/lib/types";
 import "@/app/learn/lesson.css";
 
+async function requestReview(lesson: Lesson, result: QuizResult): Promise<ReviewResponse> {
+  try {
+    const response = await fetch("/api/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lesson, result }),
+      signal: AbortSignal.timeout(27_000),
+    });
+    if (!response.ok) throw new Error("Review unavailable");
+    const review: unknown = await response.json();
+    assertReviewResponse(review, lesson, result);
+    return review;
+  } catch {
+    // A connection failure must not prevent focused practice or erase progress.
+    return { ...createMockReview({ lesson, result }), fallbackReason: "generation-failed" };
+  }
+}
+
 export function LessonExperience({ moduleId }: { moduleId: string }) {
-  const { state, ready, saveLesson, startModule, recordQuizResult } =
+  const { state, ready, saveLesson, startModule, recordQuizResult, saveRemediation, markRemediationReviewed } =
     useLearning();
   const [loadError, setLoadError] = useState<{ key: string; message: string } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [slidePosition, setSlidePosition] = useState({ key: "", index: 0 });
   const [tutorBusy, setTutorBusy] = useState(false);
+  const [quizRetry, setQuizRetry] = useState(0);
+  const [loadingReview, setLoadingReview] = useState<string | null>(null);
+  const reviewRequests = useRef(new Map<string, Promise<ReviewResponse>>());
   const reviewQuestionRef = useRef<((question: string) => void) | null>(null);
   const pauseNarrationRef = useRef<(() => void) | null>(null);
   const pauseNarration = useCallback(() => pauseNarrationRef.current?.(), []);
@@ -32,6 +54,20 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
   const lessonKey = `${requestKey}:${lesson?.id}`;
   const slideIndex = slidePosition.key === lessonKey ? slidePosition.index : 0;
   const error = loadError?.key === requestKey ? loadError.message : "";
+  const latestCandidate = state.latestQuizResults
+    ? state.latestQuizResults[moduleId] : state.quizResults[moduleId];
+  let latestResult: QuizResult | undefined;
+  if (lesson && latestCandidate) {
+    try {
+      assertAttemptForLesson(lesson, latestCandidate);
+      latestResult = latestCandidate;
+    } catch { /* Historical scores do not diagnose a replacement lesson. */ }
+  }
+  const storedReview = state.remediations?.[moduleId];
+  const savedReview = storedReview?.review.lessonId === lesson?.id &&
+    storedReview?.review.attemptedAt === latestResult?.completedAt ? storedReview : undefined;
+  const reviewKey = `${lessonKey}:${latestResult?.completedAt}:${JSON.stringify(latestResult?.answers)}`;
+  const reviewBusy = loadingReview === reviewKey;
   const moduleIndex =
     state.plan?.modules.findIndex((item) => item.id === moduleId) ?? -1;
 
@@ -64,6 +100,33 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
       active = false;
     };
   }, [ready, currentModule, lesson, saveLesson, startModule, attempt, state.plan?.id, state.planGeneration, requestKey]);
+
+  const prepareReview = useCallback((result: QuizResult) => {
+    if (!lesson || result.lessonId !== lesson.id || !diagnoseMistakes(lesson, result).length) return;
+    const key = `${lessonKey}:${result.completedAt}:${JSON.stringify(result.answers)}`;
+    const planId = state.plan?.id;
+    const planGeneration = state.planGeneration;
+    let request = reviewRequests.current.get(key);
+    if (!request) {
+      request = requestReview(lesson, result);
+      reviewRequests.current.set(key, request);
+    }
+    setLoadingReview(key);
+    void request.then((response) => {
+      saveRemediation(response, planId, planGeneration, result);
+    }).finally(() => {
+      setLoadingReview((current) => current === key ? null : current);
+    });
+  }, [lesson, lessonKey, state.plan?.id, state.planGeneration, saveRemediation]);
+
+  useEffect(() => {
+    if (!ready || !lesson || !latestResult || latestResult.passed || savedReview ||
+        currentModule?.status === "locked" || !latestResult.answers) return;
+    // Resume an interrupted review after refresh, using the actual missed answers.
+    let active = true;
+    queueMicrotask(() => { if (active) prepareReview(latestResult); });
+    return () => { active = false; };
+  }, [ready, lesson, latestResult, savedReview, currentModule?.status, prepareReview]);
 
   const unavailable =
     ready &&
@@ -192,12 +255,81 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
                     onBusyChange={setTutorBusy}
                   />
                 </div>
+                {(reviewBusy || savedReview || (latestResult && !latestResult.passed)) && (
+                  <section className="lesson-quiz card" id="targeted-review" aria-labelledby="targeted-review-title" tabIndex={-1}>
+                    <div className="quiz-heading">
+                      <div>
+                        <span className="eyebrow">A FOCUSED SECOND LOOK</span>
+                        <h2 id="targeted-review-title">Review weak areas</h2>
+                        <p className="muted">Practice the ideas behind your missed answers, then check your understanding again. Passing still requires 70%.</p>
+                      </div>
+                      <span className="quiz-heading-icon"><Icon name="book" size={25} /></span>
+                    </div>
+                    {reviewBusy ? (
+                      <p role="status">Preparing explanations and examples for your missed questions…</p>
+                    ) : savedReview ? (
+                      <>
+                        <p className="muted">
+                          {savedReview.mode === "claude" ? "Claude targeted review" : "Lesson-based practice review"}
+                          {savedReview.fallbackReason && " · AI review was unavailable; this review uses your saved lesson."}
+                        </p>
+                        <p>{savedReview.review.summary}</p>
+                        <div className="quiz-review">
+                          <ul>
+                            {savedReview.review.areas.map((area) => {
+                              const question = lesson.quiz.find((item) => item.id === area.questionId);
+                              return (
+                                <li key={area.questionId}>
+                                  <h3>{area.concept}</h3>
+                                  <p><strong>Knowledge gap:</strong> {question?.question}</p>
+                                  <p>{area.explanation}</p>
+                                  <p><strong>Worked example:</strong> {area.workedExample}</p>
+                                  <strong>Try this next</strong>
+                                  {area.steps.map((step, index) => <p key={index}>{index + 1}. {step}</p>)}
+                                  <button type="button" onClick={() => {
+                                    pauseNarration();
+                                    setSlidePosition({ key: lessonKey, index: Math.max(0, lesson.slides.findIndex((slide) => slide.id === area.slideId)) });
+                                    document.querySelector(".lesson-main-grid")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                  }}>Revisit the related slide <Icon name="arrow-right" size={14} /></button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                        <div className="quiz-result-actions">
+                          <button className="button button-primary" type="button" onClick={() => {
+                            markRemediationReviewed(moduleId, savedReview.review.attemptedAt);
+                            setQuizRetry((value) => value + 1);
+                            document.getElementById("knowledge-check")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                          }}>
+                            {savedReview.reviewedAt ? "Return to the knowledge check" : "I’ve reviewed — try the knowledge check"}
+                            <Icon name="arrow-right" size={16} />
+                          </button>
+                        </div>
+                        <p className="muted">Reviewing supports practice. Assessment results determine module completion.</p>
+                      </>
+                    ) : (
+                      <p>Your earlier result did not save individual answers. Retry the knowledge check to identify the concepts to review.</p>
+                    )}
+                  </section>
+                )}
                 <div className="lesson-lower-grid">
                   <Quiz
-                    key={lessonKey}
+                    key={`${lessonKey}:${quizRetry}`}
                     lesson={lesson}
                     previousResult={state.quizResults[moduleId]}
-                    onComplete={recordQuizResult}
+                    latestResult={latestResult}
+                    onComplete={(result) => recordQuizResult(result, state.plan?.id, state.planGeneration)}
+                    reviewBusy={reviewBusy}
+                    onReviewWeakAreas={(result) => {
+                      pauseNarration();
+                      if (!savedReview || savedReview.review.attemptedAt !== result.completedAt) prepareReview(result);
+                      requestAnimationFrame(() => {
+                        const panel = document.getElementById("targeted-review");
+                        panel?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        panel?.focus({ preventScroll: true });
+                      });
+                    }}
                     reviewDisabled={tutorBusy}
                     onReview={(question) => {
                       pauseNarration();

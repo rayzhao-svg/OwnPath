@@ -3,20 +3,27 @@
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/icon";
+import { diagnoseMistakes } from "@/lib/remediation";
 import type { Lesson, QuizQuestion, QuizResult } from "@/lib/types";
 
 export function Quiz({
   lesson,
   previousResult,
+  latestResult,
   onComplete,
   onReview,
+  onReviewWeakAreas,
   reviewDisabled = false,
+  reviewBusy = false,
 }: {
   lesson: Lesson;
   previousResult?: QuizResult;
+  latestResult?: QuizResult;
   onComplete: (result: QuizResult) => void;
   onReview?: (question: string) => void;
+  onReviewWeakAreas?: (result: QuizResult) => void;
   reviewDisabled?: boolean;
+  reviewBusy?: boolean;
 }) {
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [result, setResult] = useState<QuizResult | null>(null);
@@ -24,12 +31,22 @@ export function Quiz({
   const allAnswered = lesson.quiz.every(
     (question) => answers[question.id] !== undefined,
   );
-  const missedQuestions = result
-    ? lesson.quiz.filter((question) => answers[question.id] !== question.correctAnswer)
+  const diagnosticCandidate = result ?? latestResult;
+  const diagnosticResult = diagnosticCandidate?.lessonId === lesson.id &&
+    diagnosticCandidate.moduleId === lesson.moduleId &&
+    diagnosticCandidate.totalQuestions === lesson.quiz.length
+    ? diagnosticCandidate : undefined;
+  const mistakes = diagnosticResult
+    ? diagnoseMistakes(lesson, diagnosticResult)
+    : [];
+  const missedQuestions = diagnosticResult?.answers
+    ? lesson.quiz.filter((question) =>
+        diagnosticResult.answers?.[question.id] !== question.correctAnswer)
     : [];
 
   function review(question: QuizQuestion) {
-    const prompt = `Help me understand this quiz question: ${question.question}\nMy answer: ${question.options[answers[question.id]]}\nCorrect answer: ${question.options[question.correctAnswer]}\nExplanation: ${question.explanation}\nPlease explain my mistake using this lesson and give me a similar practice example.`;
+    const selectedAnswer = diagnosticResult?.answers?.[question.id];
+    const prompt = `Help me understand this quiz question: ${question.question}\nMy answer: ${selectedAnswer === undefined ? "Not recorded" : question.options[selectedAnswer]}\nCorrect answer: ${question.options[question.correctAnswer]}\nExplanation: ${question.explanation}\nPlease explain my mistake using this lesson and give me a similar practice example.`;
     onReview?.(prompt.slice(0, 1800));
   }
 
@@ -53,6 +70,10 @@ export function Quiz({
       totalQuestions: lesson.quiz.length,
       passed: score >= 70,
       completedAt: new Date().toISOString(),
+      answers: { ...answers },
+      missedQuestionIds: lesson.quiz
+        .filter((question) => answers[question.id] !== question.correctAnswer)
+        .map((question) => question.id),
     };
     setResult(nextResult);
     setError("");
@@ -83,7 +104,16 @@ export function Quiz({
           <Icon name={previousResult.passed ? "check" : "book"} size={17} />
           {previousResult.passed
             ? `You’ve already passed this module with ${previousResult.score}%. You can practice again below.`
-            : `Your saved score is ${previousResult.score}%. Revisit the transcript or ask the tutor about anything unclear, then try the questions again below.`}
+            : `Your saved score is ${previousResult.score}%. Review your weak areas, then try the questions again below.`}
+        </p>
+      )}
+      {!result && diagnosticResult && !diagnosticResult.passed && (
+        <p className="quiz-previous quiz-previous-review">
+          <Icon name="book" size={17} />
+          Latest attempt: {diagnosticResult.score}%.
+          {diagnosticResult.answers
+            ? " Your targeted review focuses on the concepts you missed."
+            : " Take the quiz again to identify specific gaps; earlier attempts did not record individual answers."}
         </p>
       )}
       <form onSubmit={submit}>
@@ -147,14 +177,32 @@ export function Quiz({
           <section className="quiz-review" aria-labelledby="quiz-review-title">
             <h3 id="quiz-review-title">Focus your next review</h3>
             <p>
-              Revisit these ideas before retrying. Use the explanations above,
-              read the lecture transcript, or work through an example with your tutor.
+              {diagnosticResult?.passed
+                ? "You passed this assessment. These optional review points can strengthen your understanding."
+                : "These answers show which ideas need another look. Work through your targeted review before retrying the assessment."}
             </p>
+            {onReviewWeakAreas && diagnosticResult && (
+              <button
+                type="button"
+                className="button button-primary button-small"
+                aria-busy={reviewBusy}
+                onClick={() => onReviewWeakAreas(diagnosticResult)}
+              >
+                Review weak areas <Icon name="book" size={15} />
+              </button>
+            )}
             <ul>
               {missedQuestions.map((question) => (
                 <li key={question.id}>
+                  <span className="eyebrow">
+                    {mistakes.find((mistake) => mistake.questionId === question.id)?.concept || lesson.title}
+                  </span>
                   <strong>{question.question}</strong>
+                  <p>
+                    Your answer: {question.options[diagnosticResult?.answers?.[question.id] ?? -1] || "Not recorded"}
+                  </p>
                   <p>Correct answer: {question.options[question.correctAnswer]}</p>
+                  {!result && <p>{question.explanation}</p>}
                   {onReview && (
                     <button
                       type="button"

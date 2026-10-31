@@ -298,4 +298,23 @@ export function assertQuizResult(value: unknown): asserts value is QuizResult {
   textValue(value.completedAt, "quizResult.completedAt", 100);
   if (!Number.isFinite(Date.parse(value.completedAt)))
     fail("quizResult.completedAt must be a valid timestamp.");
+  if (value.answers !== undefined) {
+    record(value.answers, "quizResult.answers");
+    if (Object.keys(value.answers).length !== value.totalQuestions)
+      fail("quizResult.answers must contain one answer for every question.");
+    for (const [id, answer] of Object.entries(value.answers)) {
+      textValue(id, "quizResult.answers question ID", 100);
+      finiteNumber(answer, `quizResult.answers[${id}]`, 0, 5);
+      if (!Number.isInteger(answer)) fail("Quiz answers must be integer choice indices.");
+    }
+  }
+  if (value.missedQuestionIds !== undefined) {
+    textList(value.missedQuestionIds, "quizResult.missedQuestionIds", 20, 100);
+    if (
+      new Set(value.missedQuestionIds).size !== value.missedQuestionIds.length ||
+      value.missedQuestionIds.length !== value.totalQuestions - value.correctAnswers
+    ) fail("Missed question IDs must be unique and match the incorrect answer count.");
+    if (value.answers && value.missedQuestionIds.some((id) => !Object.hasOwn(value.answers as object, id)))
+      fail("Missed question IDs must belong to the answered questions.");
+  }
 }
