@@ -20,6 +20,10 @@ import { ApiFailure } from "@/lib/validation";
 export async function generatePlan({
   profile,
 }: PlanRequest): Promise<PlanResponse> {
+  // Keep the Claude adapter behind the plan boundary; lessons and chat stay mock.
+  const { generateClaudePlan } = await import("@/lib/claude-plan");
+  const plan = await generateClaudePlan(profile);
+  if (plan) return { plan, mode: "claude" };
   return { plan: createMockPlan(profile), mode: "mock" };
 }
 

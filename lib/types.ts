@@ -93,14 +93,14 @@ export interface PlanRequest {
 }
 export interface PlanResponse {
   plan: StudyPlan;
-  mode: "mock";
+  mode: "mock" | "claude";
 }
 export interface LessonRequest {
   module: Module;
 }
 export interface LessonResponse {
   lesson: Lesson;
-  mode: "mock";
+  mode: "mock" | "claude";
 }
 export interface ChatRequest {
   lesson: Lesson;
@@ -109,7 +109,7 @@ export interface ChatRequest {
 }
 export interface ChatResponse {
   message: TutorMessage;
-  mode: "mock";
+  mode: "mock" | "claude";
 }
 export interface ApiError {
   error: {

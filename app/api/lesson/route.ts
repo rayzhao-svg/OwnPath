@@ -1,15 +1,19 @@
 import { NextResponse } from "next/server";
-import { generateLesson } from "@/lib/ai";
+import { generateLessonResponse } from "@/lib/claude-lesson";
 import {
   errorResponse,
   parseLessonRequest,
   readJsonBody,
 } from "@/lib/validation";
 
+export const runtime = "nodejs";
+export const maxDuration = 30;
+
 export async function POST(request: Request) {
   try {
     return NextResponse.json(
-      await generateLesson(parseLessonRequest(await readJsonBody(request))),
+      await generateLessonResponse(parseLessonRequest(await readJsonBody(request))),
+      { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
     return errorResponse(error);
