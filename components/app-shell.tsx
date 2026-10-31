@@ -81,7 +81,11 @@ export function AppShell({
             {title && <span className="topbar-title">{title}</span>}
           </div>
           <span className="mock-badge">
-            <span /> Phase 1 · Mock mode
+            <span /> {state.planMode === "claude"
+              ? "Claude curriculum"
+              : state.planMode === "mock"
+                ? "Mock curriculum"
+                : "Your personal learning space"}
           </span>
         </header>
         <main id="main-content" className="app-content">

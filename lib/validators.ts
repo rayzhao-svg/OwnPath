@@ -10,6 +10,7 @@ import type {
   QuizQuestion,
   QuizResult,
   Slide,
+  StudyPlan,
   TutorMessage,
 } from "@/lib/types";
 
@@ -147,6 +148,44 @@ export function assertModule(value: unknown): asserts value is Module {
     "module.status",
   );
   textList(value.topics, "module.topics", 20, 200, 1);
+}
+
+/** Shared by generated responses, client ingestion, and version-1 storage. */
+export function assertStudyPlan(value: unknown): asserts value is StudyPlan {
+  record(value, "plan");
+  textValue(value.id, "plan.id", 100);
+  textValue(value.profileId, "plan.profileId", 100);
+  textValue(value.title, "plan.title", 200);
+  // Existing mock summaries can contain all three bounded profile text fields.
+  textValue(value.summary, "plan.summary", 8000);
+  enumValue(value.track, ["data-science", "web-development", "product-design"], "plan.track");
+  finiteNumber(value.weeklyStudyHours, "plan.weeklyStudyHours", 1, 40);
+  textValue(value.generatedAt, "plan.generatedAt", 100);
+  if (!Number.isFinite(Date.parse(value.generatedAt)))
+    fail("plan.generatedAt must be a valid timestamp.");
+  // Keep older persisted curricula compatible; Claude separately requires 4–6.
+  list(value.modules, "plan.modules", 50, 1);
+  value.modules.forEach(assertModule);
+  const modules = value.modules as Module[];
+  const byId = new Map(modules.map((item) => [item.id, item]));
+  if (byId.size !== modules.length) fail("plan.modules must have unique IDs.");
+  if (!modules.some((item) => item.status !== "locked"))
+    fail("plan must have at least one available or completed module.");
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  function visit(id: string) {
+    if (visiting.has(id)) fail("plan prerequisites must not contain cycles.");
+    if (visited.has(id)) return;
+    const item = byId.get(id);
+    if (!item) fail("plan prerequisites must reference modules in this plan.");
+    if (new Set(item.prerequisites).size !== item.prerequisites.length)
+      fail("module prerequisites must not repeat IDs.");
+    visiting.add(id);
+    item.prerequisites.forEach(visit);
+    visiting.delete(id);
+    visited.add(id);
+  }
+  modules.forEach((item) => visit(item.id));
 }
 
 function assertSlide(value: unknown, path: string): asserts value is Slide {

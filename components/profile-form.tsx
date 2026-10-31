@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { useLearning } from "@/lib/learning-context";
-import { requestPlan } from "@/lib/api-client";
+import { requestPlanResponse } from "@/lib/api-client";
 import type { LearnerProfile, LearningTrack } from "@/lib/types";
 
 const tracks: {
@@ -42,9 +42,14 @@ function ProfileFields() {
   const [hours, setHours] = useState(state.profile?.availableStudyTime || 5);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const pending = useRef(false);
+  const requestGeneration = useRef(0);
+
+  useEffect(() => () => { requestGeneration.current += 1; }, []);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending.current) return;
     const fields = new FormData(event.currentTarget);
     const profile: LearnerProfile = {
       id: state.profile?.id || crypto.randomUUID(),
@@ -65,19 +70,25 @@ function ProfileFields() {
       );
       return;
     }
+    pending.current = true;
+    const generation = requestGeneration.current;
     setBusy(true);
     setError(null);
     try {
-      const plan = await requestPlan(profile);
-      setPlan(profile, plan);
+      const response = await requestPlanResponse(profile);
+      if (generation !== requestGeneration.current) return;
+      setPlan(profile, response.plan, response.mode);
       router.push("/dashboard");
     } catch (cause) {
+      if (generation !== requestGeneration.current) return;
       setError(
         cause instanceof Error
           ? cause.message
           : "Your path could not be created. Please try again.",
       );
       setBusy(false);
+    } finally {
+      if (generation === requestGeneration.current) pending.current = false;
     }
   }
 
@@ -282,9 +293,8 @@ function ProfileFields() {
         <div className="aside-divider" />
         <span className="eyebrow">GOOD TO KNOW</span>
         <p className="aside-small">
-          This first version uses curated mock paths across three subjects. Your
-          profile shapes the recommendations and study pace. Live AI is coming
-          in a future phase.
+          Explore three subjects with a path shaped by your background, goals,
+          and study time. Your lessons and progress stay in this browser.
         </p>
       </aside>
     </div>

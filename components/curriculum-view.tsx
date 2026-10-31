@@ -91,7 +91,13 @@ export function CurriculumView() {
             <span className="eyebrow">
               {demo ? "SAMPLE LEARNING PATH" : "YOUR PERSONAL LEARNING PATH"}
             </span>
-            <span className="path-level">Built on your experience</span>
+            <span className="path-level">
+              {demo || state.planMode === "mock"
+                ? "Mock curriculum"
+                : state.planMode === "claude"
+                  ? "Claude curriculum"
+                  : "Saved curriculum"}
+            </span>
           </div>
           <h2>{plan.title}</h2>
           <p>{plan.summary}</p>
@@ -246,7 +252,10 @@ export function CurriculumView() {
                       </div>
                       {locked ? (
                         <span className="prerequisite-note">
-                          Complete the previous module
+                          Complete: {module.prerequisites
+                            .filter((id) => plan.modules.find((item) => item.id === id)?.status !== "completed")
+                            .map((id) => plan.modules.find((item) => item.id === id)?.title)
+                            .join(", ") || "the prerequisite modules"}
                         </span>
                       ) : (
                         <button
@@ -349,8 +358,8 @@ export function CurriculumView() {
           <div className="demo-disclosure">
             <Icon name="sparkles" size={16} />
             <p>
-              Phase 1 preview. Curricula, lessons, and tutor responses use
-              curated mock content. Progress stays in this browser.
+              Follow your lessons, ask questions, and check your understanding.
+              Your path and progress stay in this browser.
             </p>
           </div>
         </aside>

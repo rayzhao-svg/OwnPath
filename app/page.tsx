@@ -285,7 +285,7 @@ export default function LandingPage() {
       <footer className="landing-footer page-container">
         <Brand small />
         <p>Made for the way forward.</p>
-        <span>Phase 1 preview · Mock learning experiences</span>
+        <span>Your path · Your pace · Your learning</span>
       </footer>
     </div>
   );

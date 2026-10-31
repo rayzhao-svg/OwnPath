@@ -15,10 +15,11 @@ import "@/app/learn/lesson.css";
 export function LessonExperience({ moduleId }: { moduleId: string }) {
   const { state, ready, saveLesson, startModule, recordQuizResult } =
     useLearning();
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState<{ key: string; message: string } | null>(null);
   const [attempt, setAttempt] = useState(0);
-  const [lessonMode, setLessonMode] = useState<LessonResponse["mode"] | null>(null);
-  const [slideIndex, setSlideIndex] = useState(0);
+  const [slidePosition, setSlidePosition] = useState({ key: "", index: 0 });
+  const [tutorBusy, setTutorBusy] = useState(false);
+  const reviewQuestionRef = useRef<((question: string) => void) | null>(null);
   const pauseNarrationRef = useRef<(() => void) | null>(null);
   const pauseNarration = useCallback(() => pauseNarrationRef.current?.(), []);
   const requests = useRef(new Map<string, Promise<LessonResponse>>());
@@ -26,6 +27,11 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
     (item) => item.id === moduleId,
   );
   const lesson = state.lessons[moduleId];
+  const lessonMode = state.lessonModes?.[moduleId];
+  const requestKey = `${state.planGeneration}:${state.plan?.id}:${moduleId}`;
+  const lessonKey = `${requestKey}:${lesson?.id}`;
+  const slideIndex = slidePosition.key === lessonKey ? slidePosition.index : 0;
+  const error = loadError?.key === requestKey ? loadError.message : "";
   const moduleIndex =
     state.plan?.modules.findIndex((item) => item.id === moduleId) ?? -1;
 
@@ -33,32 +39,31 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
     if (!ready || !currentModule || currentModule.status === "locked" || lesson)
       return;
     let active = true;
-    let request = requests.current.get(currentModule.id);
+    const planId = state.plan?.id;
+    const planGeneration = state.planGeneration;
+    let request = requests.current.get(requestKey);
     if (!request) {
       request = requestLessonResponse(currentModule);
-      requests.current.set(currentModule.id, request);
+      requests.current.set(requestKey, request);
     }
     void request
       .then((response) => {
         if (!active) return;
-        setError("");
-        setLessonMode(response.mode);
-        saveLesson(response.lesson);
-        startModule(currentModule.id);
+        setLoadError(null);
+        saveLesson(response.lesson, response.mode, planId, planGeneration);
+        startModule(currentModule.id, planId, planGeneration);
       })
       .catch((cause: unknown) => {
-        requests.current.delete(currentModule.id);
+        requests.current.delete(requestKey);
         if (active)
-          setError(
-            cause instanceof Error
+          setLoadError({ key: requestKey, message: cause instanceof Error
               ? cause.message
-              : "This lesson could not load. Please try again.",
-          );
+              : "This lesson could not load. Please try again." });
       });
     return () => {
       active = false;
     };
-  }, [ready, currentModule, lesson, saveLesson, startModule, attempt]);
+  }, [ready, currentModule, lesson, saveLesson, startModule, attempt, state.plan?.id, state.planGeneration, requestKey]);
 
   const unavailable =
     ready &&
@@ -151,7 +156,7 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
                 <button
                   className="button button-primary"
                   onClick={() => {
-                    setError("");
+                    setLoadError(null);
                     setAttempt((value) => value + 1);
                   }}
                 >
@@ -172,25 +177,32 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
               <>
                 <div className="lesson-main-grid">
                   <LecturePlayer
-                    key={`player-${lesson.id}`}
+                    key={`player-${lessonKey}`}
                     lesson={lesson}
                     slideIndex={slideIndex}
-                    onSlideChange={setSlideIndex}
+                    onSlideChange={(index) => setSlidePosition({ key: lessonKey, index })}
                     pauseNarrationRef={pauseNarrationRef}
                   />
                   <LectureChat
-                    key={`chat-${lesson.id}`}
+                    key={`chat-${lessonKey}`}
                     lesson={lesson}
                     slideIndex={slideIndex}
                     onInteract={pauseNarration}
+                    reviewQuestionRef={reviewQuestionRef}
+                    onBusyChange={setTutorBusy}
                   />
                 </div>
                 <div className="lesson-lower-grid">
                   <Quiz
-                    key={lesson.id}
+                    key={lessonKey}
                     lesson={lesson}
                     previousResult={state.quizResults[moduleId]}
                     onComplete={recordQuizResult}
+                    reviewDisabled={tutorBusy}
+                    onReview={(question) => {
+                      pauseNarration();
+                      reviewQuestionRef.current?.(question);
+                    }}
                   />
                   <aside className="lesson-resources">
                     <span className="eyebrow">GO A LITTLE DEEPER</span>

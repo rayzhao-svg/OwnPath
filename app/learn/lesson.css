@@ -695,6 +695,73 @@
   color: #657b4e;
   margin-bottom: 22px;
 }
+.quiz-previous-review {
+  background: #f7f5ed;
+  color: #756c50;
+  line-height: 1.7;
+}
+.quiz-previous > svg {
+  flex-shrink: 0;
+}
+.quiz-review {
+  padding: 18px;
+  margin-bottom: 22px;
+  border: 1px solid #e4dfcc;
+  border-radius: 9px;
+  background: #faf9f3;
+  color: #6a6751;
+}
+.quiz-review h3 {
+  font-family: Georgia, serif;
+  font-size: 21px;
+  font-weight: 400;
+  margin: 0 0 8px;
+}
+.quiz-review > p,
+.quiz-review li p {
+  font-size: 11px;
+  line-height: 1.8;
+  margin: 7px 0 10px;
+}
+.quiz-review ul {
+  list-style: none;
+  display: grid;
+  gap: 17px;
+  padding: 0;
+  margin: 17px 0 0;
+}
+.quiz-review li {
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.quiz-review li strong {
+  font-weight: 500;
+}
+.quiz-review button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #b8c5a5;
+  border-radius: 6px;
+  background: #fff;
+  color: #536747;
+  padding: 8px 10px;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.quiz-review button:focus-visible {
+  outline: 2px solid #789658;
+  outline-offset: 3px;
+}
+.quiz-review button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.quiz-result .quiz-saved-pass {
+  margin-top: 8px;
+}
 .quiz-result {
   display: flex;
   gap: 19px;

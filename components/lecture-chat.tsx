@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 import { Icon } from "@/components/icon";
 import { requestTutorResponse } from "@/lib/api-client";
 import type { ChatResponse, Lesson, TutorMessage } from "@/lib/types";
@@ -9,10 +9,14 @@ export function LectureChat({
   lesson,
   slideIndex,
   onInteract,
+  reviewQuestionRef,
+  onBusyChange,
 }: {
   lesson: Lesson;
   slideIndex: number;
   onInteract: () => void;
+  reviewQuestionRef?: RefObject<((question: string) => void) | null>;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const [messages, setMessages] = useState<TutorMessage[]>([]);
   const [question, setQuestion] = useState("");
@@ -24,9 +28,27 @@ export function LectureChat({
   const requestHistory = useRef<TutorMessage[]>([]);
   const [failedQuestion, setFailedQuestion] = useState<{ text: string; slideId: string } | null>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
+  const questionRef = useRef<HTMLTextAreaElement>(null);
   const currentSlide = lesson.slides[slideIndex] ?? lesson.slides[0];
   const prefix = `[OwnPath slide: ${currentSlide.id}]\n`;
   const maxQuestionLength = 2000 - prefix.length;
+
+  useEffect(() => {
+    if (!reviewQuestionRef) return;
+    const review = (text: string) => {
+      if (pending.current) return;
+      onInteract();
+      setQuestion(text.slice(0, 1800));
+      setError("");
+      setFailedQuestion(null);
+      questionRef.current?.focus();
+      questionRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    };
+    reviewQuestionRef.current = review;
+    return () => {
+      if (reviewQuestionRef.current === review) reviewQuestionRef.current = null;
+    };
+  }, [reviewQuestionRef, onInteract]);
 
   useEffect(() => {
     const conversation = conversationRef.current;
@@ -36,8 +58,9 @@ export function LectureChat({
   useEffect(
     () => () => {
       requestGeneration.current += 1;
+      onBusyChange?.(false);
     },
-    [],
+    [onBusyChange],
   );
 
   async function ask(text: string, slideId = currentSlide.id) {
@@ -51,6 +74,7 @@ export function LectureChat({
     onInteract();
     const generation = requestGeneration.current;
     pending.current = true;
+    onBusyChange?.(true);
     setLoading(true);
     setError("");
     try {
@@ -86,6 +110,7 @@ export function LectureChat({
       if (generation === requestGeneration.current) {
         pending.current = false;
         setLoading(false);
+        onBusyChange?.(false);
       }
     }
   }
@@ -195,6 +220,7 @@ export function LectureChat({
           Ask about this lesson
         </label>
         <textarea
+          ref={questionRef}
           id="tutor-question"
           rows={2}
           maxLength={maxQuestionLength}

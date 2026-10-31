@@ -3,16 +3,20 @@
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/icon";
-import type { Lesson, QuizResult } from "@/lib/types";
+import type { Lesson, QuizQuestion, QuizResult } from "@/lib/types";
 
 export function Quiz({
   lesson,
   previousResult,
   onComplete,
+  onReview,
+  reviewDisabled = false,
 }: {
   lesson: Lesson;
   previousResult?: QuizResult;
   onComplete: (result: QuizResult) => void;
+  onReview?: (question: string) => void;
+  reviewDisabled?: boolean;
 }) {
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [result, setResult] = useState<QuizResult | null>(null);
@@ -20,6 +24,14 @@ export function Quiz({
   const allAnswered = lesson.quiz.every(
     (question) => answers[question.id] !== undefined,
   );
+  const missedQuestions = result
+    ? lesson.quiz.filter((question) => answers[question.id] !== question.correctAnswer)
+    : [];
+
+  function review(question: QuizQuestion) {
+    const prompt = `Help me understand this quiz question: ${question.question}\nMy answer: ${question.options[answers[question.id]]}\nCorrect answer: ${question.options[question.correctAnswer]}\nExplanation: ${question.explanation}\nPlease explain my mistake using this lesson and give me a similar practice example.`;
+    onReview?.(prompt.slice(0, 1800));
+  }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -66,10 +78,12 @@ export function Quiz({
           <Icon name="target" size={25} />
         </span>
       </div>
-      {previousResult?.passed && !result && (
-        <p className="quiz-previous">
-          <Icon name="check" size={17} /> You’ve already passed this module with{" "}
-          {previousResult.score}%. You can practice again below.
+      {previousResult && !result && (
+        <p className={`quiz-previous${previousResult.passed ? "" : " quiz-previous-review"}`}>
+          <Icon name={previousResult.passed ? "check" : "book"} size={17} />
+          {previousResult.passed
+            ? `You’ve already passed this module with ${previousResult.score}%. You can practice again below.`
+            : `Your saved score is ${previousResult.score}%. Revisit the transcript or ask the tutor about anything unclear, then try the questions again below.`}
         </p>
       )}
       <form onSubmit={submit}>
@@ -129,6 +143,32 @@ export function Quiz({
             {error}
           </p>
         )}
+        {missedQuestions.length > 0 && (
+          <section className="quiz-review" aria-labelledby="quiz-review-title">
+            <h3 id="quiz-review-title">Focus your next review</h3>
+            <p>
+              Revisit these ideas before retrying. Use the explanations above,
+              read the lecture transcript, or work through an example with your tutor.
+            </p>
+            <ul>
+              {missedQuestions.map((question) => (
+                <li key={question.id}>
+                  <strong>{question.question}</strong>
+                  <p>Correct answer: {question.options[question.correctAnswer]}</p>
+                  {onReview && (
+                    <button
+                      type="button"
+                      disabled={reviewDisabled}
+                      onClick={() => review(question)}
+                    >
+                      Review this question with tutor <Icon name="chat" size={14} />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         {!result ? (
           <div className="quiz-submit">
             <span>
@@ -156,9 +196,14 @@ export function Quiz({
               <p>
                 {result.correctAnswers} of {result.totalQuestions} correct.{" "}
                 {result.passed
-                  ? "This module is complete. Your next step is ready."
+                  ? "This module is complete. Return to your path to see available modules."
                   : "Review the explanations and try again when you’re ready."}
               </p>
+              {!result.passed && previousResult?.passed && (
+                <p className="quiz-saved-pass">
+                  Your earlier passing score of {previousResult.score}% remains saved.
+                </p>
+              )}
               <div className="quiz-result-actions">
                 <button
                   type="button"
@@ -166,6 +211,7 @@ export function Quiz({
                   onClick={() => {
                     setResult(null);
                     setAnswers({});
+                    setError("");
                   }}
                 >
                   <Icon name="refresh" size={16} /> Practice again
