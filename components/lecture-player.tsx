@@ -38,9 +38,27 @@ export function LecturePlayer({
   }, [pauseNarrationRef]);
 
   useEffect(
-    () => () => {
-      utteranceRef.current = null;
-      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    () => {
+      const leavePage = () => {
+        utteranceRef.current = null;
+        if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+        setPlayback("idle");
+      };
+      const hidePage = () => {
+        if (document.hidden && utteranceRef.current && "speechSynthesis" in window) {
+          window.speechSynthesis.pause();
+          setPlayback("paused");
+          setNotice("Narration paused while you were away. Resume when you’re ready.");
+        }
+      };
+      window.addEventListener("pagehide", leavePage);
+      document.addEventListener("visibilitychange", hidePage);
+      return () => {
+        window.removeEventListener("pagehide", leavePage);
+        document.removeEventListener("visibilitychange", hidePage);
+        utteranceRef.current = null;
+        if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      };
     },
     [],
   );

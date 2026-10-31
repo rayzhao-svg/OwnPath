@@ -7,7 +7,7 @@ import type {
   Module,
   StudyPlan,
 } from "@/lib/types";
-import { ApiFailure, assertModule } from "@/lib/validators";
+import { ApiFailure, assertModule, assertStudyPlan } from "@/lib/validators";
 
 const MODEL = "claude-sonnet-5-5";
 const MAX_RESPONSE_BYTES = 128 * 1024;
@@ -249,7 +249,7 @@ function assemblePlan(value: unknown, profile: LearnerProfile): StudyPlan {
   );
   if (totalMinutes > profile.availableStudyTime * 60 * 12)
     throw new Error("Curriculum exceeds twelve-week budget");
-  return {
+  const plan: StudyPlan = {
     id: `plan-${planId}`,
     profileId: profile.id,
     track: profile.track,
@@ -259,6 +259,8 @@ function assemblePlan(value: unknown, profile: LearnerProfile): StudyPlan {
     weeklyStudyHours: profile.availableStudyTime,
     generatedAt: new Date().toISOString(),
   };
+  assertStudyPlan(plan);
+  return plan;
 }
 
 async function readMessage(response: Response): Promise<unknown> {

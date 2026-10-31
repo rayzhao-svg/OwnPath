@@ -12,7 +12,7 @@ import type {
   StudyPlan,
   TutorMessage,
 } from "@/lib/types";
-import { assertLesson } from "@/lib/validators";
+import { assertLesson, assertStudyPlan } from "@/lib/validators";
 
 async function post<TRequest, TResponse>(
   url: string,
@@ -57,7 +57,18 @@ function assertMode(mode: unknown): asserts mode is "mock" | "claude" {
 }
 
 export async function requestPlan(profile: LearnerProfile): Promise<StudyPlan> {
-  return (await post<PlanRequest, PlanResponse>("/api/plan", { profile })).plan;
+  return (await requestPlanResponse(profile)).plan;
+}
+export async function requestPlanResponse(profile: LearnerProfile): Promise<PlanResponse> {
+  const response = await post<PlanRequest, PlanResponse>("/api/plan", { profile });
+  assertMode(response?.mode);
+  assertStudyPlan(response.plan);
+  if (
+    response.plan.profileId !== profile.id || response.plan.track !== profile.track ||
+    response.plan.weeklyStudyHours !== profile.availableStudyTime
+  )
+    throw new Error("The curriculum did not match your profile. Please try again.");
+  return response;
 }
 export async function requestLesson(module: Module): Promise<Lesson> {
   return (await requestLessonResponse(module)).lesson;
@@ -66,7 +77,7 @@ export async function requestLessonResponse(module: Module): Promise<LessonRespo
   const response = await post<LessonRequest, LessonResponse>("/api/lesson", { module });
   assertMode(response?.mode);
   assertLesson(response.lesson);
-  if (response.lesson.moduleId !== module.id)
+  if (response.lesson.moduleId !== module.id || response.lesson.title !== module.title)
     throw new Error("The lesson did not match this module. Please try again.");
   return response;
 }

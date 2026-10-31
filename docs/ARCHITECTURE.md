@@ -1,6 +1,6 @@
 # Architecture
 
-OwnPath Phase 1 is a Next.js App Router application with a small server API surface and browser-owned learning state. TypeScript strict mode is enabled. Tailwind CSS and shared styles provide a responsive cream-and-olive interface. Runtime dependencies are limited to Next.js, React, and React DOM.
+OwnPath Phase 3A integrates the Phase 2A curriculum engine and Phase 2B lecture/tutor system in a Next.js App Router application with a small server API surface and browser-owned learning state. TypeScript strict mode is enabled. Tailwind CSS and shared styles provide a responsive cream-and-olive interface. Runtime dependencies are limited to Next.js, React, and React DOM.
 
 ## Application flow
 
@@ -30,11 +30,11 @@ Page components compose reusable `ProfileForm`, `CurriculumView`, `LecturePlayer
 
 ## Contracts and API boundary
 
-`lib/types.ts` defines domain objects and every request/response contract. `lib/api-client.ts` is the typed browser HTTP boundary. Pure runtime assertions and request parsers live in `lib/validators.ts`; they are shared by server handlers and browser-state restoration without importing server code. `lib/validation.ts` adds bounded JSON transport and HTTP error responses, re-exporting the validators for route handlers. Routes invoke `lib/ai.ts` after validation. The deterministic catalog and mock generators live in `lib/mock-data.ts`.
+`lib/types.ts` defines domain objects and every request/response contract. `lib/api-client.ts` is the typed browser HTTP boundary. Pure runtime assertions and request parsers live in `lib/validators.ts`; they are shared by server handlers and browser-state restoration without importing server code. `lib/validation.ts` adds bounded JSON transport and HTTP error responses, re-exporting the validators for route handlers. The plan route uses `lib/ai.ts` to select `lib/claude-plan.ts` or the original mock generator. Lesson and tutor routes use `lib/claude-lesson.ts` and `lib/claude-tutor.ts`; their unconfigured fallback delegates to the existing functions in `lib/ai.ts`. The deterministic catalog and mock generators remain in `lib/mock-data.ts`.
 
-All future Claude integration belongs behind `lib/ai.ts`. It must preserve the existing response types or coordinate an explicit shared contract change. `ANTHROPIC_API_KEY` remains server-only; the Phase 1 adapter always returns mocks regardless of its presence. Components never import an AI SDK or credentials.
+All three endpoints preserve their existing request structures and return the shared `"mock" | "claude"` response mode. Claude adapters use server-only native `fetch`, structured JSON, bounded generation, and runtime output validation. `ANTHROPIC_API_KEY` remains server-only. Missing, blank, or dummy placeholder keys choose mocks; configured keys attempt Claude and fail with safe API errors when invalid or unavailable. Components never import server adapters or credentials.
 
-The mock catalog has six modules for each of three tracks: Data Science, Web Development, and Product Design. Profile fields influence the summary and pacing through fixed rules. Lesson IDs and module relationships stay consistent across API calls; the lesson endpoint checks catalog identity rather than generating arbitrary user-supplied course content. Tutor responses use validated slide context.
+The mock catalog has six modules for each of three tracks: Data Science, Web Development, and Product Design. Claude curricula contain 4–6 modules whose actual content and difficulty respond to background, experience, skills, specific goals, and weekly study time. Academic resource metadata comes only from the server's verified catalog; selected URLs are checked before returning a live plan. Claude lesson generation accepts any valid plan module and teaches its title, description, and topics without a catalog-ID requirement. Catalog identity checks remain in mock lesson generation. Each live lesson has 4–6 slides and three quiz questions and fits the subsequent tutor payload budget.
 
 ## Browser state
 
@@ -48,10 +48,12 @@ State is a prototype convenience, not trusted authorization. LocalStorage and cl
 
 `LecturePlayer` uses browser speech synthesis for the slide's narration text. It supports manual navigation and playback controls, cancels owned speech as context changes, and offers readable text when audio is unavailable. Voice availability and audio permissions are browser/OS dependent; there is no generated audio or video pipeline.
 
-`Quiz` requires an answer to each question, computes a percentage, shows explanations, and records a pass at 70% or above. Assessment is deliberately local and does not claim proficiency verification. `LectureChat` sends the lesson context and question to the mock tutor endpoint, and presents pending and error states.
+`Quiz` requires an answer to each question, computes a percentage, shows explanations, and records a pass at 70% or above. Assessment is deliberately local and does not claim proficiency verification. Correct answers are client-visible in both response modes.
+
+`LessonExperience` shares the active slide index between player and tutor. `LectureChat` sends the full lecture, current question, and bounded conversation history to `/api/chat`. An optional hidden question prefix identifies the current slide without changing `ChatRequest`; the server validates its membership in the lesson. Prior turns retain their own slide context across navigation. Focusing or submitting the tutor pauses narration without discarding the resumable utterance. The tutor displays the server's actual response mode, pending state, and retryable errors. Cached lessons use a neutral saved-lesson label because response mode is not added to the storage schema.
 
 ## Validation and deployment
 
 Use Node.js 24 or newer. Run `npm run typecheck`, `npm run lint`, and `npm run build` before delivery. The production build uses Next.js's supported Webpack mode because Turbopack's worker-port behavior is restricted in the local sandbox. With a server running, `npm run test:smoke` verifies the four page routes, all three endpoint flows across all tracks, lesson generation for all 18 catalog modules, contract relationships, and malformed/invalid/oversized requests. Browser QA checks the full profile-to-quiz interaction, responsive layouts, and storage behavior. See [local validation results](VALIDATION.md).
 
-Vercel can deploy this as a standard Next.js application. Mock mode requires no credentials or external services. No deployment configuration, authentication service, database, PDF parser, or video generator is introduced in Phase 1.
+Vercel can deploy this as a standard Next.js application. Mock mode requires no credentials or external services. Live generation requires server-side Anthropic access and academic-resource connectivity. Phase 3A adds no deployment configuration, authentication service, database, PDF parser, video renderer, voice recognition, or real-time audio streaming.

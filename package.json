@@ -8,7 +8,9 @@
     "start": "next start --hostname 127.0.0.1 --port 3000",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "next typegen && tsc --noEmit",
-    "test:smoke": "node scripts/smoke.mjs"
+    "test:smoke": "node scripts/smoke.mjs",
+    "test:integration": "node scripts/integration.cjs",
+    "test:journey": "node scripts/journey-ui.cjs"
   },
   "dependencies": {
     "next": "16.4.3",

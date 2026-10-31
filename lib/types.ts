@@ -59,7 +59,7 @@ export interface QuizQuestion {
   id: string;
   question: string;
   options: string[];
-  /** Zero-based index into options. Client-visible in mock mode only. */
+  /** Zero-based index into options. Client-visible for local practice scoring. */
   correctAnswer: number;
   explanation: string;
 }
@@ -128,4 +128,9 @@ export interface LearningState {
   plan: StudyPlan | null;
   lessons: Record<string, Lesson>;
   quizResults: Record<string, QuizResult>;
+  /** Optional metadata keeps older version-1 browser stores compatible. */
+  planMode?: PlanResponse["mode"];
+  lessonModes?: Record<string, LessonResponse["mode"]>;
+  /** Local generation identity, independent of deterministic mock plan IDs. */
+  planGeneration?: string;
 }

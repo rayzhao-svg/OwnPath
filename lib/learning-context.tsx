@@ -10,15 +10,16 @@ import {
 import { createMockPlan, DEMO_PROFILE } from "@/lib/mock-data";
 import {
   assertLesson,
-  assertModule,
   assertProfile,
   assertQuizResult,
+  assertStudyPlan,
 } from "@/lib/validators";
 import type {
   LearnerProfile,
   LearningState,
   Lesson,
-  Module,
+  LessonResponse,
+  PlanResponse,
   QuizResult,
   StudyPlan,
 } from "@/lib/types";
@@ -30,15 +31,16 @@ const EMPTY_STATE: LearningState = {
   plan: null,
   lessons: {},
   quizResults: {},
+  lessonModes: {},
 };
 
 interface LearningContextValue {
   state: LearningState;
   ready: boolean;
   storageWarning: string | null;
-  setPlan: (profile: LearnerProfile, plan: StudyPlan) => void;
-  saveLesson: (lesson: Lesson) => void;
-  startModule: (moduleId: string) => void;
+  setPlan: (profile: LearnerProfile, plan: StudyPlan, mode?: PlanResponse["mode"]) => void;
+  saveLesson: (lesson: Lesson, mode?: LessonResponse["mode"], expectedPlanId?: string, expectedPlanGeneration?: string) => void;
+  startModule: (moduleId: string, expectedPlanId?: string, expectedPlanGeneration?: string) => void;
   recordQuizResult: (result: QuizResult) => void;
   loadDemo: () => void;
 }
@@ -47,6 +49,26 @@ const LearningContext = createContext<LearningContextValue | null>(null);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function knownMode(value: unknown): value is PlanResponse["mode"] {
+  return value === "mock" || value === "claude";
+}
+
+/** Stable prerequisite order also supports older valid, unordered saved plans. */
+function orderPlan(plan: StudyPlan): StudyPlan {
+  const byId = new Map(plan.modules.map((item) => [item.id, item]));
+  const seen = new Set<string>();
+  const ordered: StudyPlan["modules"] = [];
+  function add(id: string) {
+    if (seen.has(id)) return;
+    const item = byId.get(id)!;
+    item.prerequisites.forEach(add);
+    seen.add(id);
+    ordered.push(item);
+  }
+  plan.modules.forEach((item) => add(item.id));
+  return { ...plan, modules: ordered };
 }
 
 function restoreState(raw: string): LearningState | null {
@@ -62,40 +84,25 @@ function restoreState(raw: string): LearningState | null {
     return null;
   const profile = value.profile;
   const plan = value.plan;
-  const tracks = ["data-science", "web-development", "product-design"];
   assertProfile(profile);
+  assertStudyPlan(plan);
   if (
-    typeof plan.id !== "string" ||
     plan.profileId !== profile.id ||
     plan.track !== profile.track ||
-    !tracks.includes(String(plan.track)) ||
-    typeof plan.title !== "string" ||
-    typeof plan.summary !== "string" ||
-    typeof plan.generatedAt !== "string" ||
-    typeof plan.weeklyStudyHours !== "number" ||
-    !Number.isFinite(plan.weeklyStudyHours) ||
-    plan.weeklyStudyHours < 1 ||
-    plan.weeklyStudyHours > 40 ||
-    !Array.isArray(plan.modules) ||
-    !plan.modules.length ||
-    plan.modules.length > 50
+    plan.weeklyStudyHours !== profile.availableStudyTime
   )
     return null;
-  plan.modules.forEach(assertModule);
-  const modules = plan.modules as Module[];
-  const ids = new Set(modules.map((item) => item.id));
-  if (
-    ids.size !== modules.length ||
-    modules.some((item) => item.prerequisites.some((id) => !ids.has(id)))
-  )
-    return null;
+  const byId = new Map(plan.modules.map((item) => [item.id, item]));
   const lessons: Record<string, Lesson> = {};
   const quizResults: Record<string, QuizResult> = {};
+  const lessonModes: NonNullable<LearningState["lessonModes"]> = {};
   // Invalid cache entries can be regenerated without losing the learner's path.
   for (const [id, cached] of Object.entries(value.lessons)) {
     try {
       assertLesson(cached);
-      if (ids.has(id) && cached.moduleId === id) lessons[id] = cached;
+      const learningModule = byId.get(id);
+      if (learningModule && cached.moduleId === id && cached.title === learningModule.title)
+        lessons[id] = cached;
     } catch {
       /* Ignore an outdated lesson. */
     }
@@ -103,17 +110,29 @@ function restoreState(raw: string): LearningState | null {
   for (const [id, cached] of Object.entries(value.quizResults)) {
     try {
       assertQuizResult(cached);
-      if (ids.has(id) && cached.moduleId === id) quizResults[id] = cached;
+      if (
+        byId.has(id) && cached.moduleId === id &&
+        (!lessons[id] || (lessons[id].id === cached.lessonId && lessons[id].quiz.length === cached.totalQuestions))
+      ) quizResults[id] = cached;
     } catch {
       /* Ignore an outdated result. */
+    }
+  }
+  if (isRecord(value.lessonModes)) {
+    for (const [id, mode] of Object.entries(value.lessonModes)) {
+      if (lessons[id] && knownMode(mode)) lessonModes[id] = mode;
     }
   }
   return {
     version: 1,
     profile,
-    plan: plan as unknown as StudyPlan,
+    plan: orderPlan(plan),
     lessons,
     quizResults,
+    ...(knownMode(value.planMode) ? { planMode: value.planMode } : {}),
+    lessonModes,
+    planGeneration: typeof value.planGeneration === "string" && value.planGeneration.length > 0 && value.planGeneration.length <= 100
+      ? value.planGeneration : crypto.randomUUID(),
   };
 }
 
@@ -162,24 +181,45 @@ export function LearningProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state, ready]);
 
-  const setPlan = useCallback((profile: LearnerProfile, plan: StudyPlan) => {
-    setState({ ...EMPTY_STATE, profile, plan });
+  const setPlan = useCallback((profile: LearnerProfile, plan: StudyPlan, mode?: PlanResponse["mode"]) => {
+    assertProfile(profile);
+    assertStudyPlan(plan);
+    if (plan.profileId !== profile.id || plan.track !== profile.track ||
+        plan.weeklyStudyHours !== profile.availableStudyTime)
+      throw new Error("The curriculum did not match your profile. Please try again.");
+    setState({ ...EMPTY_STATE, profile, plan: orderPlan(plan), planGeneration: crypto.randomUUID(), ...(knownMode(mode) ? { planMode: mode } : {}) });
+    setStorageWarning(null);
   }, []);
-  const saveLesson = useCallback((lesson: Lesson) => {
-    setState((previous) =>
-      previous.plan?.modules.some((item) => item.id === lesson.moduleId)
-        ? {
-            ...previous,
-            lessons: { ...previous.lessons, [lesson.moduleId]: lesson },
-          }
-        : previous,
-    );
+  const saveLesson = useCallback((lesson: Lesson, mode?: LessonResponse["mode"], expectedPlanId?: string, expectedPlanGeneration?: string) => {
+    assertLesson(lesson);
+    setState((previous) => {
+      if (expectedPlanId && previous.plan?.id !== expectedPlanId) return previous;
+      if (expectedPlanGeneration && previous.planGeneration !== expectedPlanGeneration) return previous;
+      const target = previous.plan?.modules.find((item) => item.id === lesson.moduleId);
+      if (!target || target.title !== lesson.title || target.status === "locked") return previous;
+      const lessonModes = { ...previous.lessonModes };
+      if (knownMode(mode)) lessonModes[lesson.moduleId] = mode;
+      else delete lessonModes[lesson.moduleId];
+      const quizResults = { ...previous.quizResults };
+      const priorResult = quizResults[lesson.moduleId];
+      if (priorResult && (priorResult.lessonId !== lesson.id || priorResult.totalQuestions !== lesson.quiz.length))
+        delete quizResults[lesson.moduleId];
+      return {
+        ...previous,
+        lessons: { ...previous.lessons, [lesson.moduleId]: lesson },
+        lessonModes,
+        quizResults,
+      };
+    });
   }, []);
-  const startModule = useCallback((moduleId: string) => {
+  const startModule = useCallback((moduleId: string, expectedPlanId?: string, expectedPlanGeneration?: string) => {
     setState((previous) => {
       if (!previous.plan) return previous;
+      if (expectedPlanId && previous.plan.id !== expectedPlanId) return previous;
+      if (expectedPlanGeneration && previous.planGeneration !== expectedPlanGeneration) return previous;
       const target = previous.plan.modules.find((m) => m.id === moduleId);
       if (!target || target.status !== "not-started") return previous;
+      if (!target.prerequisites.every((id) => previous.plan!.modules.some((item) => item.id === id && item.status === "completed"))) return previous;
       return {
         ...previous,
         plan: {
@@ -192,12 +232,16 @@ export function LearningProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
   const recordQuizResult = useCallback((result: QuizResult) => {
+    assertQuizResult(result);
     setState((previous) => {
       if (!previous.plan) return previous;
       const target = previous.plan.modules.find(
         (item) => item.id === result.moduleId,
       );
       if (!target || target.status === "locked") return previous;
+      const currentLesson = previous.lessons[result.moduleId];
+      if (currentLesson?.id !== result.lessonId || currentLesson.quiz.length !== result.totalQuestions) return previous;
+      if (!target.prerequisites.every((id) => previous.plan!.modules.some((item) => item.id === id && item.status === "completed"))) return previous;
       const priorResult = previous.quizResults[result.moduleId];
       const bestResult =
         priorResult && priorResult.score > result.score ? priorResult : result;
@@ -223,7 +267,7 @@ export function LearningProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
   const loadDemo = useCallback(
-    () => setPlan(DEMO_PROFILE, createMockPlan(DEMO_PROFILE)),
+    () => setPlan(DEMO_PROFILE, createMockPlan(DEMO_PROFILE), "mock"),
     [setPlan],
   );
 

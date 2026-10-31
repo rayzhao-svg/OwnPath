@@ -1,5 +1,5 @@
-/** Server-only AI boundary. Phase 1 always uses local mocks, even if a key exists.
- * Add a future Claude adapter here without changing routes or shared contracts.
+/** Plan generation boundary and deterministic lesson/tutor fallbacks.
+ * Lesson and chat routes select their Claude adapters independently.
  */
 import type {
   ChatRequest,
@@ -20,7 +20,7 @@ import { ApiFailure } from "@/lib/validation";
 export async function generatePlan({
   profile,
 }: PlanRequest): Promise<PlanResponse> {
-  // Keep the Claude adapter behind the plan boundary; lessons and chat stay mock.
+  // Keep curriculum generation behind the plan boundary.
   const { generateClaudePlan } = await import("@/lib/claude-plan");
   const plan = await generateClaudePlan(profile);
   if (plan) return { plan, mode: "claude" };
