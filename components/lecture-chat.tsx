@@ -2,15 +2,36 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Icon } from "@/components/icon";
-import { requestTutor } from "@/lib/api-client";
-import type { Lesson, TutorMessage } from "@/lib/types";
+import { requestTutorResponse } from "@/lib/api-client";
+import type { ChatResponse, Lesson, TutorMessage } from "@/lib/types";
 
-export function LectureChat({ lesson }: { lesson: Lesson }) {
+export function LectureChat({
+  lesson,
+  slideIndex,
+  onInteract,
+}: {
+  lesson: Lesson;
+  slideIndex: number;
+  onInteract: () => void;
+}) {
   const [messages, setMessages] = useState<TutorMessage[]>([]);
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [mode, setMode] = useState<ChatResponse["mode"] | null>(null);
   const requestGeneration = useRef(0);
+  const pending = useRef(false);
+  const requestHistory = useRef<TutorMessage[]>([]);
+  const [failedQuestion, setFailedQuestion] = useState<{ text: string; slideId: string } | null>(null);
+  const conversationRef = useRef<HTMLDivElement>(null);
+  const currentSlide = lesson.slides[slideIndex] ?? lesson.slides[0];
+  const prefix = `[OwnPath slide: ${currentSlide.id}]\n`;
+  const maxQuestionLength = 2000 - prefix.length;
+
+  useEffect(() => {
+    const conversation = conversationRef.current;
+    if (conversation) conversation.scrollTop = conversation.scrollHeight;
+  }, [messages, loading]);
 
   useEffect(
     () => () => {
@@ -19,33 +40,53 @@ export function LectureChat({ lesson }: { lesson: Lesson }) {
     [],
   );
 
-  async function ask(text: string) {
+  async function ask(text: string, slideId = currentSlide.id) {
     const trimmed = text.trim();
-    if (!trimmed || loading) return;
+    if (!trimmed || pending.current) return;
+    const contextualQuestion = `[OwnPath slide: ${slideId}]\n${trimmed}`;
+    if (contextualQuestion.length > 2000) {
+      setError(`Please shorten your question to ${maxQuestionLength} characters.`);
+      return;
+    }
+    onInteract();
     const generation = requestGeneration.current;
+    pending.current = true;
     setLoading(true);
     setError("");
     try {
-      // The API accepts at most 20 history messages. Keep long conversations usable.
-      const response = await requestTutor(lesson, trimmed, messages.slice(-20));
+      // Keep slide context in API history without displaying its technical prefix.
+      const response = await requestTutorResponse(
+        lesson, contextualQuestion, requestHistory.current.slice(-20),
+      );
       if (generation !== requestGeneration.current) return;
       const user: TutorMessage = {
         id: crypto.randomUUID(),
         role: "user",
         content: trimmed,
       };
-      setMessages((previous) => [...previous, user, response]);
+      requestHistory.current = [
+        ...requestHistory.current,
+        { ...user, content: contextualQuestion },
+        response.message,
+      ].slice(-20);
+      setMessages((previous) => [...previous, user, response.message].slice(-100));
+      setMode(response.mode);
+      setFailedQuestion(null);
       setQuestion("");
     } catch (cause) {
       if (generation !== requestGeneration.current) return;
       setQuestion(trimmed);
+      setFailedQuestion({ text: trimmed, slideId });
       setError(
         cause instanceof Error
           ? cause.message
           : "Your question could not be sent. Please try again.",
       );
     } finally {
-      if (generation === requestGeneration.current) setLoading(false);
+      if (generation === requestGeneration.current) {
+        pending.current = false;
+        setLoading(false);
+      }
     }
   }
 
@@ -67,9 +108,15 @@ export function LectureChat({ lesson }: { lesson: Lesson }) {
       </div>
       <div className="tutor-mode">
         <span /> Contextual tutor{" "}
-        <span className="tutor-mode-badge">MOCK PREVIEW</span>
+        <span className="tutor-mode-badge">
+          {mode === "claude" ? "CLAUDE" : mode === "mock" ? "MOCK PREVIEW" : "READY"}
+        </span>
       </div>
+      <p className="tutor-slide-context">
+        Slide {slideIndex + 1}: {currentSlide.title}
+      </p>
       <div
+        ref={conversationRef}
         className="tutor-conversation"
         role="log"
         aria-label="Tutor conversation"
@@ -92,7 +139,7 @@ export function LectureChat({ lesson }: { lesson: Lesson }) {
               disabled={loading}
               onClick={() =>
                 void ask(
-                  `Can you explain ${lesson.slides[0]?.title ?? lesson.title} with a simple example?`,
+                  `Can you explain ${currentSlide.title} with a simple example?`,
                 )
               }
             >
@@ -103,7 +150,7 @@ export function LectureChat({ lesson }: { lesson: Lesson }) {
               className="tutor-suggestion"
               disabled={loading}
               onClick={() =>
-                void ask("What are the key takeaways from this lesson?")
+                void ask("What are the key takeaways from this slide?")
               }
             >
               What should I remember? <Icon name="arrow-right" size={15} />
@@ -127,9 +174,21 @@ export function LectureChat({ lesson }: { lesson: Lesson }) {
         )}
       </div>
       {error && (
-        <p className="tutor-error" role="alert">
-          {error}
-        </p>
+        <div className="tutor-error" role="alert">
+          <p>{error}</p>
+          {failedQuestion && (
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => {
+                const failed = failedQuestion;
+                if (failed) void ask(failed.text, failed.slideId);
+              }}
+            >
+              Try again
+            </button>
+          )}
+        </div>
       )}
       <form className="tutor-form" onSubmit={submit}>
         <label className="sr-only" htmlFor="tutor-question">
@@ -138,10 +197,15 @@ export function LectureChat({ lesson }: { lesson: Lesson }) {
         <textarea
           id="tutor-question"
           rows={2}
-          maxLength={2000}
+          maxLength={maxQuestionLength}
           value={question}
           disabled={loading}
-          onChange={(event) => setQuestion(event.target.value)}
+          onFocus={onInteract}
+          onChange={(event) => {
+            setQuestion(event.target.value);
+            setError("");
+            setFailedQuestion(null);
+          }}
           placeholder="What’s on your mind?"
         />
         <button
@@ -153,7 +217,9 @@ export function LectureChat({ lesson }: { lesson: Lesson }) {
         </button>
       </form>
       <p className="tutor-footnote">
-        Practice responses use this lesson’s mock content.
+        {mode === "mock"
+          ? "Practice responses use this lesson’s content."
+          : "Ask anytime. Narration pauses while you ask; resume when ready."}
       </p>
     </aside>
   );

@@ -6,10 +6,14 @@ import {
   readJsonBody,
 } from "@/lib/validation";
 
+export const runtime = "nodejs";
+export const maxDuration = 30;
+
 export async function POST(request: Request) {
   try {
     return NextResponse.json(
       await generatePlan(parsePlanRequest(await readJsonBody(request))),
+      { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
     return errorResponse(error);

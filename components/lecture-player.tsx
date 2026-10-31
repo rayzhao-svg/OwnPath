@@ -1,11 +1,20 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { Icon } from "@/components/icon";
 import type { Lesson } from "@/lib/types";
 
-export function LecturePlayer({ lesson }: { lesson: Lesson }) {
-  const [slideIndex, setSlideIndex] = useState(0);
+export function LecturePlayer({
+  lesson,
+  slideIndex,
+  onSlideChange,
+  pauseNarrationRef,
+}: {
+  lesson: Lesson;
+  slideIndex: number;
+  onSlideChange: (index: number) => void;
+  pauseNarrationRef: RefObject<(() => void) | null>;
+}) {
   const [playback, setPlayback] = useState<"idle" | "playing" | "paused">(
     "idle",
   );
@@ -13,6 +22,20 @@ export function LecturePlayer({ lesson }: { lesson: Lesson }) {
   const [notice, setNotice] = useState("");
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const slide = lesson.slides[slideIndex];
+
+  useEffect(() => {
+    const pause = () => {
+      if (utteranceRef.current && "speechSynthesis" in window) {
+        window.speechSynthesis.pause();
+        setPlayback("paused");
+        setNotice("Narration paused for your question. Resume when you’re ready.");
+      }
+    };
+    pauseNarrationRef.current = pause;
+    return () => {
+      if (pauseNarrationRef.current === pause) pauseNarrationRef.current = null;
+    };
+  }, [pauseNarrationRef]);
 
   useEffect(
     () => () => {
@@ -29,8 +52,9 @@ export function LecturePlayer({ lesson }: { lesson: Lesson }) {
   }
 
   function changeSlide(index: number) {
+    if (index < 0 || index >= lesson.slides.length) return;
     stopNarration();
-    setSlideIndex(index);
+    onSlideChange(index);
     setNotice("");
   }
 
@@ -53,6 +77,7 @@ export function LecturePlayer({ lesson }: { lesson: Lesson }) {
     if (playback === "paused" && utteranceRef.current) {
       speech.resume();
       setPlayback("playing");
+      setNotice("");
       return;
     }
 
@@ -65,7 +90,7 @@ export function LecturePlayer({ lesson }: { lesson: Lesson }) {
       utterance.onend = () => {
         if (utteranceRef.current !== utterance) return;
         if (index + 1 < lesson.slides.length) {
-          setSlideIndex(index + 1);
+          onSlideChange(index + 1);
           speak(index + 1);
         } else {
           utteranceRef.current = null;
@@ -83,7 +108,13 @@ export function LecturePlayer({ lesson }: { lesson: Lesson }) {
           "Narration could not play. Try again, or read the transcript below.",
         );
       };
-      speech.speak(utterance);
+      try {
+        speech.speak(utterance);
+      } catch {
+        utteranceRef.current = null;
+        setPlayback("idle");
+        setNotice("Narration could not play. Read the transcript below to continue.");
+      }
     }
 
     speech.cancel();

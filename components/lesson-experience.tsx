@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { Icon } from "@/components/icon";
 import { LectureChat } from "@/components/lecture-chat";
 import { LecturePlayer } from "@/components/lecture-player";
 import { Quiz } from "@/components/quiz";
-import { requestLesson } from "@/lib/api-client";
+import { requestLessonResponse } from "@/lib/api-client";
 import { useLearning } from "@/lib/learning-context";
-import type { Lesson } from "@/lib/types";
+import type { LessonResponse } from "@/lib/types";
 import "@/app/learn/lesson.css";
 
 export function LessonExperience({ moduleId }: { moduleId: string }) {
@@ -17,7 +17,11 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
     useLearning();
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
-  const requests = useRef(new Map<string, Promise<Lesson>>());
+  const [lessonMode, setLessonMode] = useState<LessonResponse["mode"] | null>(null);
+  const [slideIndex, setSlideIndex] = useState(0);
+  const pauseNarrationRef = useRef<(() => void) | null>(null);
+  const pauseNarration = useCallback(() => pauseNarrationRef.current?.(), []);
+  const requests = useRef(new Map<string, Promise<LessonResponse>>());
   const currentModule = state.plan?.modules.find(
     (item) => item.id === moduleId,
   );
@@ -31,13 +35,15 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
     let active = true;
     let request = requests.current.get(currentModule.id);
     if (!request) {
-      request = requestLesson(currentModule);
+      request = requestLessonResponse(currentModule);
       requests.current.set(currentModule.id, request);
     }
     void request
-      .then((nextLesson) => {
+      .then((response) => {
         if (!active) return;
-        saveLesson(nextLesson);
+        setError("");
+        setLessonMode(response.mode);
+        saveLesson(response.lesson);
         startModule(currentModule.id);
       })
       .catch((cause: unknown) => {
@@ -125,7 +131,12 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
                 <Icon name="headphones" size={15} /> Listen or read
               </span>
               <span>
-                <Icon name="sparkles" size={15} /> Mock lesson preview
+                <Icon name="sparkles" size={15} />{" "}
+                {lessonMode === "claude"
+                  ? "AI-generated lesson"
+                  : lessonMode === "mock"
+                    ? "Mock lesson preview"
+                    : lesson ? "Saved lesson" : "Preparing lesson"}
               </span>
               {currentModule.status === "completed" && (
                 <span className="lesson-completed">
@@ -160,8 +171,19 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
             ) : (
               <>
                 <div className="lesson-main-grid">
-                  <LecturePlayer key={`player-${lesson.id}`} lesson={lesson} />
-                  <LectureChat key={`chat-${lesson.id}`} lesson={lesson} />
+                  <LecturePlayer
+                    key={`player-${lesson.id}`}
+                    lesson={lesson}
+                    slideIndex={slideIndex}
+                    onSlideChange={setSlideIndex}
+                    pauseNarrationRef={pauseNarrationRef}
+                  />
+                  <LectureChat
+                    key={`chat-${lesson.id}`}
+                    lesson={lesson}
+                    slideIndex={slideIndex}
+                    onInteract={pauseNarration}
+                  />
                 </div>
                 <div className="lesson-lower-grid">
                   <Quiz
