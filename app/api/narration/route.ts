@@ -7,7 +7,7 @@ export const maxDuration = 30;
 const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
 
 export async function GET() {
-  return Response.json(getNarrationStatus(), { headers });
+  return Response.json(await getNarrationStatus(), { headers });
 }
 
 export async function POST(request: Request) {

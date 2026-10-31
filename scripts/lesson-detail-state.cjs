@@ -82,14 +82,40 @@ const find = (tree, predicate) => nodes(tree).find(predicate);
 const button = (tree, label) => find(tree, node => node.type === 'button' && text(node).trim() === label);
 const settle = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
 
+function detailedSlide(slide, heavy = false) {
+  const roles = ['concept', 'reasoning', 'worked-example', 'pitfall', 'guided-practice', 'independent-practice', 'recap'];
+  const scenes = roles.map((role, section) => {
+    const lineNarrations = Array.from({ length: heavy ? 8 : 3 }, (_, index) =>
+      `${role} step ${index + 1}: explain ${slide.bullets[0]} Compare the intermediate customer counts before applying the calculation, and check the result against the original observation window.`.padEnd(heavy ? 350 : 220, 'x'));
+    return {
+      title: `Customer teaching section ${section + 1}`, role, lineNarrations,
+      narration: lineNarrations.join(' '),
+      visual: { kind: section === 2 ? 'calculation' : 'concept', lines: lineNarrations.map((_, index) =>
+        `Customer evidence step ${index + 1}: 8 retained / 10 original = 80 percent.`.padEnd(heavy ? 350 : 100, 'x')) },
+    };
+  });
+  return { ...clone(slide), overview: slide.overview ?? slide.narration, learningObjective: slide.learningObjective ?? slide.bullets[0],
+    teachingVersion: 2, qualityVersion: 1, scenes, narration: scenes.map(scene => scene.narration).join(' ') };
+}
 function detailed(lesson) {
-  return { ...clone(lesson), slides: lesson.slides.map(slide => {
-    const scenes = [
-      { title: 'Understand the idea', narration: `Start with this principle: ${slide.bullets[0]} Work through the reasoning before relying on a result.`, visual: { kind: 'concept', lines: [slide.bullets[0].slice(0, 250)] } },
-      { title: 'Check a concrete example', narration: 'Use a small example whose intermediate values can be checked. Compare each step with the original question.', visual: { kind: 'calculation', lines: ['Known input → intermediate step', 'Check the result against the input'] } },
-    ];
-    return { ...clone(slide), scenes, narration: scenes.map(scene => scene.narration).join(' ') };
-  }) };
+  return { ...clone(lesson), slides: lesson.slides.map(slide => detailedSlide(slide)) };
+}
+function chapterPatch(request) {
+  return { lessonId: request.lesson.id, moduleId: request.lesson.moduleId,
+    slide: detailedSlide(request.lesson.slides.find(slide => slide.id === request.slideId)), mode: 'claude' };
+}
+function storageOverflow(lesson) {
+  const { MAX_STORED_LESSON_BYTES } = load('lib/lesson-budget.ts');
+  const source = { ...clone(lesson), slides: Array.from({ length: 12 }, (_, index) => ({ ...clone(lesson.slides[0]), id: `storage-chapter-${index}`, title: `Customer evidence chapter ${index + 1}` })) };
+  const target = detailedSlide(source.slides[0], true);
+  const bytes = value => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  for (let index = 1; index < source.slides.length; index++) {
+    source.slides[index] = detailedSlide(source.slides[index], true);
+    const expanded = { ...source, slides: source.slides.map((slide, position) => position === 0 ? target : slide) };
+    if (bytes(source) <= MAX_STORED_LESSON_BYTES && bytes(expanded) > MAX_STORED_LESSON_BYTES)
+      return { source, expanded, target };
+  }
+  throw new Error('The storage fixture must cross the explicit per-course ceiling');
 }
 function quiz(lesson, count, prefix) {
   return Array.from({ length: count }, (_, index) => ({ ...clone(lesson.quiz[index % lesson.quiz.length]), id: `${prefix}-${index}` }));
@@ -169,6 +195,7 @@ async function stateChecks(initial, lesson, plan) {
   }
   const restored = restoreForTest(JSON.stringify(state));
   equal(restored.lessons[lesson.moduleId].slides, state.lessons[lesson.moduleId].slides, 'Teaching scenes and their narration survive reload');
+  check(restored.lessons[lesson.moduleId].slides.every(slide => slide.qualityVersion === 1), 'Reviewed teaching retains its quality marker across persistence');
   equal(restored.lessons[lesson.moduleId].quiz, ten, 'The concurrently refreshed assessment survives reload');
   equal(restored.quizResults, state.quizResults, 'Prior scores survive reload with expanded teaching');
   equal(restored.remediations, state.remediations, 'Historical targeted reviews remain valid after reload');
@@ -176,7 +203,8 @@ async function stateChecks(initial, lesson, plan) {
   const passed = attempt(current().state.lessons[lesson.moduleId], ten.length);
   current().recordQuizResult(passed, plan.id, generation);
   const anotherExplanation = detailed(current().state.lessons[lesson.moduleId]);
-  anotherExplanation.slides[0].scenes[0].narration += ' Keep the intermediate values visible while checking your reasoning.';
+  anotherExplanation.slides[0].scenes[0].lineNarrations[0] += ' Keep the intermediate values visible while checking your reasoning.';
+  anotherExplanation.slides[0].scenes[0].narration = anotherExplanation.slides[0].scenes[0].lineNarrations.join(' ');
   anotherExplanation.slides[0].narration = anotherExplanation.slides[0].scenes.map(scene => scene.narration).join(' ');
   current().updateLessonTeaching(anotherExplanation, 'claude', plan.id, generation);
   equal(current().state.quizResults[lesson.moduleId], passed, 'A teaching change retains the earned passing assessment');
@@ -185,12 +213,12 @@ async function stateChecks(initial, lesson, plan) {
 }
 
 function budgetStateChecks(initial, lesson, plan) {
-  const { assertLessonRequestBudget } = load('lib/lesson-budget.ts');
+  const { assertLessonRequestBudget, MAX_STORED_LESSON_BYTES } = load('lib/lesson-budget.ts');
   const { assertLesson } = load('lib/validators.ts');
   const { questions, expanded } = budgetFixtures(lesson);
-  assertLesson(expanded); assertLessonRequestBudget(expanded); assertions += 2;
-  assertLesson({ ...lesson, quiz: questions }); assertLessonRequestBudget({ ...lesson, quiz: questions }); assertions += 2;
-  assert.throws(() => assertLessonRequestBudget({ ...expanded, quiz: questions }), /combined lesson/); assertions++;
+  const combined = { ...expanded, quiz: questions };
+  assertLesson(combined); assertLessonRequestBudget(combined); assertions += 2;
+  check(new TextEncoder().encode(JSON.stringify(combined)).byteLength > 56 * 1024, 'The accepted course exceeds the former combined request budget');
   for (const order of ['teaching-first', 'quiz-first']) {
     const runtime = hooks();
     const { LearningProvider } = load('lib/learning-context.tsx', { react: runtime.react });
@@ -198,48 +226,70 @@ function budgetStateChecks(initial, lesson, plan) {
     current().setPlan(initial.profile, plan, 'claude');
     const generation = current().state.planGeneration;
     current().saveLesson(lesson, 'claude', plan.id, generation);
-    current().recordQuizResult(attempt(lesson, lesson.quiz.length), plan.id, generation);
+    const passed = attempt(lesson, lesson.quiz.length);
+    current().recordQuizResult(passed, plan.id, generation);
     if (order === 'teaching-first') current().updateLessonTeaching(expanded, 'claude', plan.id, generation);
     else current().replaceQuiz(lesson.id, lesson.moduleId, questions, plan.id, generation);
-    const before = clone(current().state);
     if (order === 'teaching-first') current().replaceQuiz(lesson.id, lesson.moduleId, questions, plan.id, generation);
     else current().updateLessonTeaching(expanded, 'claude', plan.id, generation);
-    equal(current().state, before, `${order}: oversized merging preserves the exact cached lesson, results, reviews and progress`);
-    assertLessonRequestBudget(current().state.lessons[lesson.moduleId]); assertions++;
+    equal(current().state.lessons[lesson.moduleId].slides, expanded.slides, `${order}: large teaching remains saved alongside the refreshed assessment`);
+    equal(current().state.lessons[lesson.moduleId].quiz, questions, `${order}: large teaching preserves the complete new quiz`);
+    equal(current().state.quizResults[lesson.moduleId], passed, `${order}: course growth preserves the earned passing score`);
+    equal(current().state.plan.modules[0].status, 'completed', `${order}: course growth preserves earned completion`);
   }
+  const { source, expanded: overflow } = storageOverflow(lesson);
+  assertLesson(source); assertLesson(overflow); assertLessonRequestBudget(source); assertions += 3;
+  check(new TextEncoder().encode(JSON.stringify(overflow)).byteLength > MAX_STORED_LESSON_BYTES, 'The rejected fixture exceeds the actual 512-KiB storage ceiling');
+  assert.throws(() => assertLessonRequestBudget(overflow), /too large to save/); assertions++;
+  const runtime = hooks();
+  const { LearningProvider } = load('lib/learning-context.tsx', { react: runtime.react });
+  const current = () => runtime.render(() => LearningProvider({ children: null })).props.value;
+  current().setPlan(initial.profile, plan, 'claude');
+  const generation = current().state.planGeneration;
+  current().saveLesson(source, 'claude', plan.id, generation);
+  current().recordQuizResult(attempt(source, source.quiz.length), plan.id, generation);
+  const before = clone(current().state);
+  current().updateLessonTeaching(overflow, 'claude', plan.id, generation);
+  equal(current().state, before, 'A true storage overflow preserves the exact cached chapters, questions, scores, and completion');
 }
 
 async function clientChecks(lesson, module) {
-  const { requestLessonDetailResponse } = load('lib/api-client.ts');
+  const { requestChapterDetailResponse } = load('lib/api-client.ts');
   const originalFetch = global.fetch;
-  const valid = { lesson: detailed(lesson), mode: 'claude' };
+  const slideId = lesson.slides[0].id;
+  const valid = { lessonId: lesson.id, moduleId: lesson.moduleId, slide: detailedSlide(lesson.slides[0]), mode: 'claude' };
   let calls = 0, captured;
   try {
     global.fetch = async (url, options) => { calls++; captured = { url, options }; return Response.json(valid); };
-    equal(await requestLessonDetailResponse(lesson, module), valid, 'The client accepts a detailed response for the exact saved lesson');
-    equal(captured.url, '/api/lesson/detail', 'The client uses the dedicated teaching endpoint');
-    equal(JSON.parse(captured.options.body), { lesson, module }, 'The detail request contains its existing lesson and module');
-    equal(captured.options.headers['Content-Type'], 'application/json', 'The detail request uses the JSON contract');
+    equal(await requestChapterDetailResponse(lesson, module, slideId), valid, 'The client accepts a patch for the exact selected chapter');
+    equal(captured.url, '/api/lesson/detail', 'The chapter client uses the bounded teaching endpoint');
+    const body = JSON.parse(captured.options.body);
+    equal(body.slideId, slideId, 'The detail request explicitly identifies one chapter');
+    equal(body.lesson.slides.map(slide => [slide.id, slide.title, slide.bullets]), lesson.slides.map(slide => [slide.id, slide.title, slide.bullets]), 'The detail request retains the ordered course outline');
+    check(body.lesson.slides.every(slide => !slide.scenes), 'A chapter request omits cached teaching scenes');
+    equal(body.module, module, 'The chapter request retains its module context');
     for (const change of [
-      value => { value.lesson.id = 'other-lesson'; },
-      value => { value.lesson.moduleId = 'other-module'; },
-      value => { value.lesson.slides.reverse(); },
-      value => { value.lesson.slides[0].title = 'Other title'; },
-      value => { value.lesson.slides[0].bullets = ['Other bullets']; },
-      value => { delete value.lesson.slides[0].scenes; },
-      value => { value.lesson.quiz[0].question = 'Different assessment'; },
+      value => { value.lessonId = 'other-lesson'; },
+      value => { value.moduleId = 'other-module'; },
+      value => { value.slide.id = 'other-chapter'; },
+      value => { value.slide.title = 'Other title'; },
+      value => { value.slide.bullets = ['Other bullets']; },
+      value => { delete value.slide.scenes; },
+      value => { delete value.slide.teachingVersion; },
+      value => { delete value.slide.qualityVersion; },
+      value => { value.slide.qualityVersion = 2; },
       value => { value.mode = 'unknown'; },
     ]) {
       const bad = clone(valid); change(bad);
       global.fetch = async () => Response.json(bad);
-      await assert.rejects(requestLessonDetailResponse(lesson, module)); assertions++;
+      await assert.rejects(requestChapterDetailResponse(lesson, module, slideId)); assertions++;
     }
     const before = calls;
-    await assert.rejects(requestLessonDetailResponse({ ...lesson, title: 'x'.repeat(70 * 1024) }, module)); assertions++;
-    equal(calls, before, 'An oversized saved request is rejected before sending any data');
+    await assert.rejects(requestChapterDetailResponse({ ...lesson, title: 'x'.repeat(70 * 1024) }, module, slideId)); assertions++;
+    equal(calls, before, 'An oversized fixed course outline is rejected before sending any data');
     const controller = new AbortController(); controller.abort();
-    global.fetch = async (_url, options) => { check(options.signal.aborted, 'Caller cancellation reaches the combined request signal'); throw new DOMException('Aborted', 'AbortError'); };
-    await assert.rejects(requestLessonDetailResponse(lesson, module, controller.signal)); assertions++;
+    global.fetch = async (_url, options) => { check(options.signal.aborted, 'Caller cancellation reaches the combined chapter request signal'); throw new DOMException('Aborted', 'AbortError'); };
+    await assert.rejects(requestChapterDetailResponse(lesson, module, slideId, controller.signal)); assertions++;
   } finally { global.fetch = originalFetch; }
 }
 
@@ -255,98 +305,143 @@ function parentHarness(initial, lesson) {
     '@/lib/learning-context': { useLearning: () => context },
     '@/lib/api-client': { requestLessonResponse: () => { throw new Error('Cached lesson must not be regenerated'); },
       requestQuizRefreshResponse(saved, previousQuestions, count, signal) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); quizRequests.push({ lesson: saved, previousQuestions, count, signal, resolve, reject }); return promise; },
-      requestLessonDetailResponse(saved, module, signal) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); requests.push({ lesson: saved, module, signal, resolve, reject }); return promise; } },
+      requestChapterDetailResponse(saved, module, slideId, signal) { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); requests.push({ lesson: saved, module, slideId, signal, resolve, reject }); return promise; } },
   });
   let tree, pauses = 0, moduleId = lesson.moduleId;
   const render = () => { tree = runtime.render(() => LessonExperience({ moduleId })); const player = find(tree, node => node.type === 'LecturePlayer'); if (player) player.props.pauseNarrationRef.current = () => { pauses++; }; return tree; };
   render();
   return { context, requests, updates, quizRequests, replacements, render, replayEffects: () => runtime.replayEffects(), unmount: () => runtime.unmount(),
-    navigate(id) { moduleId = id; return render(); }, get tree() { return tree; }, get pauses() { return pauses; } };
+    navigate(id) { moduleId = id; return render(); }, chapter(index) { find(tree, node => node.type === 'LecturePlayer').props.onSlideChange(index); return render(); }, get tree() { return tree; }, get pauses() { return pauses; } };
 }
 
 async function parentChecks(initial, lesson) {
+  const settleRender = async harness => { await settle(); harness.render(); await settle(); harness.render(); };
   const success = parentHarness(initial, lesson);
-  success.replayEffects(); await settle(); success.render();
-  equal(success.requests.length, 1, 'Strict Mode replay starts only one detail request');
-  check(text(success.tree).includes('Preparing a more detailed lesson'), 'The existing lesson shows a nonblocking preparation status');
-  check(find(success.tree, node => node.type === 'LecturePlayer'), 'The existing player stays available while details load');
+  success.replayEffects(); await settleRender(success);
+  equal(success.requests.length, 1, 'Strict Mode replay starts only one active-chapter request');
+  equal(success.requests[0].slideId, lesson.slides[0].id, 'The visible chapter is prepared before any later chapter');
+  check(text(success.tree).includes('Preparing this chapter'), 'The existing course shows nonblocking chapter preparation');
+  check(find(success.tree, node => node.type === 'LecturePlayer'), 'The existing player stays available while teaching loads');
   success.render(); await settle();
-  equal(success.requests.length, 1, 'Ordinary renders do not start duplicate detail requests');
-  success.requests[0].resolve({ lesson: detailed(lesson), mode: 'claude' }); await settle(); success.render();
-  equal(success.updates.length, 1, 'A valid detail response updates teaching exactly once');
-  equal(success.updates[0].slice(1), ['claude', initial.plan.id, initial.planGeneration], 'The parent passes both plan identity and generation guards');
-  equal(success.pauses, 1, 'Narration pauses before replacing its spoken teaching text');
-  check(!text(success.tree).includes('Preparing a more detailed lesson'), 'Preparation ends after success');
-  success.render(); await settle();
-  equal(success.requests.length, 1, 'Saved teaching scenes prevent another automatic upgrade');
+  equal(success.requests.length, 1, 'Ordinary renders do not duplicate a pending chapter request');
+  const concurrentQuiz = quiz(lesson, 10, 'parent-concurrent');
+  success.context.state.lessons[lesson.moduleId] = { ...success.context.state.lessons[lesson.moduleId], quiz: concurrentQuiz };
+  success.render();
+  success.requests[0].resolve(chapterPatch(success.requests[0])); await settleRender(success);
+  equal(success.updates.length, 1, 'A valid chapter patch updates teaching exactly once');
+  equal(success.updates[0].slice(1), ['claude', initial.plan.id, initial.planGeneration], 'The parent passes plan identity and generation guards');
+  equal(success.context.state.lessons[lesson.moduleId].slides[0], chapterPatch(success.requests[0]).slide, 'The target chapter receives its complete teaching patch');
+  equal(success.context.state.lessons[lesson.moduleId].slides[0].qualityVersion, 1, 'The verified patch quality marker is saved with its teaching');
+  equal(success.context.state.lessons[lesson.moduleId].slides.slice(1), lesson.slides.slice(1), 'A chapter patch leaves every other chapter unchanged');
+  equal(success.context.state.lessons[lesson.moduleId].quiz, concurrentQuiz, 'A chapter patch preserves questions changed while its request was pending');
+  equal(success.pauses, 1, 'Replacing the visible chapter pauses its current narration once');
+  equal(success.requests.length, 2, 'Completing the active chapter starts just one chapter ahead');
+  equal(success.requests[1].slideId, lesson.slides[1].id, 'Prefetch prepares the next chapter in course order');
+  success.requests[1].resolve(chapterPatch(success.requests[1])); await settleRender(success);
+  equal(success.updates.length, 2, 'The next chapter patch is saved independently');
+  equal(success.pauses, 1, 'An unrelated prefetched chapter never pauses the visible chapter');
+  equal(success.requests.length, 2, 'Prefetch stops after one chapter ahead instead of generating the whole course');
+  success.chapter(1); await settleRender(success);
+  equal(success.requests.length, 3, 'Visiting a ready chapter prepares its own next chapter');
+  equal(success.requests[2].slideId, lesson.slides[2].id, 'The prefetch window advances one chapter with navigation');
   success.unmount();
+  check(success.requests[2].signal.aborted, 'Leaving the course cancels pending prefetch');
 
-  const failure = parentHarness(initial, lesson); await settle(); failure.render();
-  failure.requests[0].reject(new Error('Expanded teaching is temporarily unavailable.')); await settle(); failure.render();
-  equal(failure.updates.length, 0, 'A failed expansion does not replace the saved lesson');
-  check(text(failure.tree).includes('Expanded teaching is temporarily unavailable.'), 'A failed expansion shows its retryable explanation');
-  check(find(failure.tree, node => node.type === 'LecturePlayer'), 'A failure leaves the old lesson readable and playable');
+  const unreviewed = detailed(lesson);
+  unreviewed.slides.forEach(slide => { delete slide.qualityVersion; });
+  const qualityUpgrade = parentHarness({ ...clone(initial), lessons: { [lesson.moduleId]: unreviewed } }, unreviewed);
+  await settleRender(qualityUpgrade);
+  equal(qualityUpgrade.requests.length, 1, 'Previously expanded chapters without a quality review receive a fresh verified chapter');
+  equal(qualityUpgrade.requests[0].slideId, lesson.slides[0].id, 'Quality upgrades prioritize the visible chapter');
+  qualityUpgrade.requests[0].resolve(chapterPatch(qualityUpgrade.requests[0])); await settleRender(qualityUpgrade);
+  equal(qualityUpgrade.context.state.lessons[lesson.moduleId].slides[0].qualityVersion, 1, 'The verified replacement completes the visible chapter quality upgrade');
+  equal(qualityUpgrade.context.state.lessons[lesson.moduleId].quiz, lesson.quiz, 'A quality upgrade preserves the exact saved assessment');
+  qualityUpgrade.unmount();
+
+  const failure = parentHarness(initial, lesson); await settleRender(failure);
+  failure.requests[0].reject(new Error('Expanded teaching is temporarily unavailable.')); await settleRender(failure);
+  equal(failure.updates.length, 0, 'Failed chapter generation leaves the saved course untouched');
+  check(text(failure.tree).includes('Expanded teaching is temporarily unavailable.'), 'A failed chapter shows an explicit retryable explanation');
   failure.render(); await settle();
   equal(failure.requests.length, 1, 'A failure does not create an automatic retry loop');
   button(failure.tree, 'Retry expanded explanation').props.onClick(); failure.render();
-  equal(failure.requests.length, 2, 'The learner can explicitly retry an expansion failure');
+  equal(failure.requests.length, 2, 'The learner can explicitly retry the failed chapter');
   failure.unmount();
-  check(failure.requests[1].signal.aborted, 'Unmount aborts an in-flight expansion');
-  failure.requests[1].resolve({ lesson: detailed(lesson), mode: 'claude' }); await settle();
-  equal(failure.updates.length, 0, 'A late response after unmount cannot restore teaching');
+  check(failure.requests[1].signal.aborted, 'Unmount aborts a foreground chapter request');
+  failure.requests[1].resolve(chapterPatch(failure.requests[1])); await settle();
+  equal(failure.updates.length, 0, 'A chapter response arriving after unmount cannot restore teaching');
 
-  const navigation = parentHarness(initial, lesson); await settle();
+  const chapterNavigation = parentHarness(initial, lesson); await settleRender(chapterNavigation);
+  chapterNavigation.chapter(3); await settleRender(chapterNavigation);
+  equal(chapterNavigation.requests.length, 2, 'Jumping to another chapter prioritizes the newly visible chapter');
+  equal(chapterNavigation.requests[1].slideId, lesson.slides[3].id, 'A chapter jump fetches its selected content rather than intermediate chapters');
+  check(chapterNavigation.requests[0].signal.aborted, 'Chapter navigation cancels the previous foreground request');
+  chapterNavigation.requests[0].resolve(chapterPatch(chapterNavigation.requests[0])); await settleRender(chapterNavigation);
+  equal(chapterNavigation.updates.length, 0, 'A canceled earlier chapter patch is ignored');
+  chapterNavigation.requests[1].resolve(chapterPatch(chapterNavigation.requests[1])); await settleRender(chapterNavigation);
+  equal(chapterNavigation.context.state.lessons[lesson.moduleId].slides[3].teachingVersion, 2, 'The newly selected chapter still receives its teaching');
+  chapterNavigation.unmount();
+
+  const navigation = parentHarness(initial, lesson); await settleRender(navigation);
   const secondModule = { ...clone(initial.plan.modules[1]), status: 'not-started', prerequisites: [] };
   const secondLesson = { ...clone(lesson), id: 'second-lesson', moduleId: secondModule.id, title: secondModule.title };
   navigation.context.state.plan.modules[1] = secondModule;
   navigation.context.state.lessons[secondModule.id] = secondLesson;
-  navigation.navigate(secondModule.id); await settle(); navigation.render();
-  equal(navigation.requests.length, 2, 'A different lesson receives its own expansion request');
-  check(navigation.requests[0].signal.aborted, 'Lesson navigation cancels the previous expansion');
-  navigation.requests[0].resolve({ lesson: detailed(lesson), mode: 'claude' }); await settle(); navigation.render();
-  equal(navigation.updates.length, 0, 'A previous lesson response is ignored after navigation');
-  check(text(navigation.tree).includes('Preparing a more detailed lesson'), 'An old request cannot clear the newer lesson loading status');
-  navigation.requests[1].resolve({ lesson: detailed(secondLesson), mode: 'claude' }); await settle(); navigation.render();
-  equal(navigation.updates[0][0].moduleId, secondModule.id, 'The newer lesson response still applies after the old request settles');
+  navigation.navigate(secondModule.id); await settleRender(navigation);
+  equal(navigation.requests.length, 2, 'Another module receives a separate active-chapter request');
+  check(navigation.requests[0].signal.aborted, 'Module navigation cancels the previous chapter request');
+  navigation.requests[0].resolve(chapterPatch(navigation.requests[0])); await settleRender(navigation);
+  equal(navigation.updates.length, 0, 'A previous module response cannot update the new module');
+  check(text(navigation.tree).includes('Preparing this chapter'), 'An old response cannot clear the new chapter loading state');
+  navigation.requests[1].resolve(chapterPatch(navigation.requests[1])); await settleRender(navigation);
+  equal(navigation.updates[0][0].moduleId, secondModule.id, 'The new module response still applies after the old request settles');
   navigation.unmount();
 
-  const { questions, expanded } = budgetFixtures(lesson);
-  const overflow = parentHarness(initial, lesson); await settle(); overflow.render();
-  overflow.context.state.lessons[lesson.moduleId] = { ...clone(lesson), quiz: questions };
-  overflow.render();
-  overflow.requests[0].resolve({ lesson: expanded, mode: 'claude' }); await settle(); overflow.render();
-  equal(overflow.updates.length, 0, 'The parent rejects a detail response that exceeds the budget with the latest active quiz');
-  check(text(overflow.tree).includes('combined lesson and questions are too long'), 'An oversized detail merge shows a retryable error instead of success');
-  check(button(overflow.tree, 'Retry expanded explanation'), 'An oversized detail response retains its explicit retry action');
+  const { source, target } = storageOverflow(lesson);
+  const overflow = parentHarness({ ...clone(initial), lessons: { [lesson.moduleId]: source } }, source); await settleRender(overflow);
+  overflow.requests[0].resolve({ lessonId: lesson.id, moduleId: lesson.moduleId, slide: target, mode: 'claude' }); await settleRender(overflow);
+  equal(overflow.updates.length, 0, 'The parent rejects a chapter merge above the actual storage ceiling');
+  check(text(overflow.tree).includes('too large to save'), 'A true storage overflow shows an actionable error instead of success');
+  check(button(overflow.tree, 'Retry expanded explanation'), 'A rejected chapter merge retains its explicit retry action');
   overflow.unmount();
 
   const serialized = parentHarness(initial, lesson);
-  find(serialized.tree, node => node.type === 'Quiz').props.onRetry(); serialized.render();
-  await settle(); serialized.render();
-  equal(serialized.quizRequests.length, 1, 'A quiz request can start before automatic detail preparation');
-  equal(serialized.requests.length, 0, 'Detail preparation waits while quiz generation is in flight');
-  serialized.quizRequests[0].reject(new Error('Questions temporarily unavailable.')); await settle(); serialized.render();
-  await settle(); serialized.render();
-  equal(serialized.requests.length, 1, 'Automatic detail preparation resumes after a failed quiz request releases its guard');
-  const blocked = find(serialized.tree, node => node.type === 'Quiz');
-  check(blocked.props.generationBlocked && !blocked.props.retryBusy, 'Detail preparation blocks only new generation, not current assessment submission');
-  blocked.props.onRetry(); serialized.render();
-  equal(serialized.quizRequests.length, 1, 'Even a direct callback cannot start a quiz during detail generation');
-  serialized.requests[0].resolve({ lesson: detailed(lesson), mode: 'claude' }); await settle(); serialized.render();
-  check(!find(serialized.tree, node => node.type === 'Quiz').props.generationBlocked, 'Successful teaching preparation releases question generation');
+  find(serialized.tree, node => node.type === 'Quiz').props.onRetry(); await settleRender(serialized);
+  equal(serialized.quizRequests.length, 1, 'A quiz can start before automatic chapter preparation');
+  equal(serialized.requests.length, 0, 'Chapter preparation waits while a requested quiz is running');
+  serialized.quizRequests[0].reject(new Error('Questions temporarily unavailable.')); await settleRender(serialized);
+  equal(serialized.requests.length, 1, 'Chapter preparation resumes after a failed quiz releases its guard');
+  const available = find(serialized.tree, node => node.type === 'Quiz');
+  check(!available.props.generationBlocked && !available.props.retryBusy, 'Optional chapter preparation leaves quiz generation available');
+  available.props.onRetry(); available.props.onRetry(); serialized.render();
+  equal(serialized.quizRequests.length, 2, 'One quiz click preempts chapter work, and repeated clicks remain deduplicated');
+  check(serialized.requests[0].signal.aborted, 'Starting a quiz cancels the optional chapter generation');
+  serialized.requests[0].resolve(chapterPatch(serialized.requests[0])); await settleRender(serialized);
+  equal(serialized.updates.length, 0, 'The canceled chapter response cannot overwrite the pending quiz');
+  equal(serialized.requests.length, 1, 'Chapter generation stays suspended while the quiz is pending');
+  const priorityQuestions = quiz(lesson, 5, 'priority-quiz');
+  serialized.quizRequests[1].resolve({ lessonId: lesson.id, moduleId: lesson.moduleId, quiz: priorityQuestions, mode: 'claude' });
+  await settleRender(serialized);
+  equal(serialized.replacements.length, 1, 'The requested quiz saves without another click');
+  equal(serialized.requests.length, 2, 'Chapter preparation resumes after quiz completion');
+  equal(serialized.requests[1].lesson.quiz, priorityQuestions, 'Resumed chapter preparation sees the newest saved questions');
+  serialized.requests[1].resolve(chapterPatch(serialized.requests[1])); await settleRender(serialized);
+  equal(serialized.context.state.lessons[lesson.moduleId].quiz, priorityQuestions, 'Resumed chapter teaching preserves the newly generated quiz');
   serialized.unmount();
 
   const readyLesson = detailed(lesson), readyState = { ...clone(initial), lessons: { [lesson.moduleId]: readyLesson } };
-  const overflowQuiz = parentHarness(readyState, readyLesson); await settle(); overflowQuiz.render();
-  const originalKey = find(overflowQuiz.tree, node => node.type === 'Quiz').key;
-  find(overflowQuiz.tree, node => node.type === 'Quiz').props.onRetry(); overflowQuiz.render();
-  overflowQuiz.context.state.lessons[lesson.moduleId] = expanded; overflowQuiz.render();
-  overflowQuiz.quizRequests[0].resolve({ lessonId: lesson.id, moduleId: lesson.moduleId, quiz: questions, mode: 'claude' }); await settle(); overflowQuiz.render();
-  equal(overflowQuiz.replacements.length, 0, 'The parent rejects a quiz response that exceeds the latest teaching budget');
-  const retained = find(overflowQuiz.tree, node => node.type === 'Quiz');
-  equal(retained.key, originalKey, 'A rejected combined quiz response does not remount or erase current answers');
-  check(retained.props.retryError.includes('combined lesson and questions are too long'), 'An oversized quiz merge exposes a retryable generation error');
-  overflowQuiz.unmount();
+  const largeQuiz = parentHarness(readyState, readyLesson); await settleRender(largeQuiz);
+  equal(largeQuiz.requests.length, 0, 'An entirely prepared course starts no redundant chapter requests');
+  const originalKey = find(largeQuiz.tree, node => node.type === 'Quiz').key;
+  const { questions, expanded } = budgetFixtures(lesson);
+  find(largeQuiz.tree, node => node.type === 'Quiz').props.onRetry(); largeQuiz.render();
+  largeQuiz.context.state.lessons[lesson.moduleId] = expanded; largeQuiz.render();
+  largeQuiz.quizRequests[0].resolve({ lessonId: lesson.id, moduleId: lesson.moduleId, quiz: questions, mode: 'claude' }); await settleRender(largeQuiz);
+  equal(largeQuiz.replacements.length, 1, 'A large stored course accepts a fresh assessment beyond the former request-size ceiling');
+  const replaced = find(largeQuiz.tree, node => node.type === 'Quiz');
+  check(replaced.key !== originalKey && !replaced.props.retryError, 'Successful assessment replacement resets answers only after saving');
+  equal(largeQuiz.context.state.lessons[lesson.moduleId].slides, expanded.slides, 'Generating questions preserves every latest saved chapter');
+  largeQuiz.unmount();
 }
 
 (async () => {
@@ -354,7 +449,7 @@ async function parentChecks(initial, lesson) {
   const { createMockPlan } = load('lib/mock-data.ts');
   const { generateLesson } = load('lib/ai.ts');
   const plan = createMockPlan(profile), original = (await generateLesson({ module: plan.modules[0] })).lesson;
-  const lesson = { ...original, quiz: quiz(original, 5, 'detail-five') };
+  const lesson = { ...original, slides: Array.from({ length: 8 }, (_, index) => ({ ...clone(original.slides[index % original.slides.length]), id: `course-outline-${index}`, title: `Customer analysis chapter ${index + 1}` })), quiz: quiz(original, 5, 'detail-five') };
   const initial = { version: 1, profile, plan, lessons: { [lesson.moduleId]: lesson }, quizResults: {}, latestQuizResults: {}, quizHistory: {}, remediations: {}, lessonModes: { [lesson.moduleId]: 'claude' }, planGeneration: 'detail-generation-one' };
   await stateChecks(initial, lesson, plan);
   budgetStateChecks(initial, lesson, plan);

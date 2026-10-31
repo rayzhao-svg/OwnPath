@@ -51,6 +51,9 @@ export interface StudyPlan {
 export interface TeachingScene {
   title: string;
   narration: string;
+  role?: "prerequisites" | "concept" | "reasoning" | "worked-example" | "pitfall" | "guided-practice" | "independent-practice" | "recap";
+  /** Spoken explanations aligned one-to-one with the displayed visual steps. */
+  lineNarrations?: string[];
   visual: {
     kind: "concept" | "code" | "calculation" | "comparison";
     lines: string[];
@@ -62,6 +65,11 @@ export interface Slide {
   title: string;
   bullets: string[];
   narration: string;
+  /** Stable chapter introduction, retained when the full teaching is loaded. */
+  overview?: string;
+  learningObjective?: string;
+  teachingVersion?: 2;
+  qualityVersion?: 1;
   /** Ordered teaching moments, each tied to its own narration and visual. */
   scenes?: TeachingScene[];
 }
@@ -81,6 +89,7 @@ export interface Lesson {
   title: string;
   slides: Slide[];
   quiz: QuizQuestion[];
+  teachingVersion?: 2;
 }
 
 export interface QuizResult {
@@ -152,6 +161,14 @@ export interface LessonRequest {
 export interface LessonDetailRequest {
   lesson: Lesson;
   module: Module;
+  /** Expand one chapter; omitted by older whole-lesson clients. */
+  slideId?: string;
+}
+export interface LessonDetailResponse {
+  lessonId: Lesson["id"];
+  moduleId: Module["id"];
+  slide: Slide;
+  mode: "mock" | "claude";
 }
 export interface LessonResponse {
   lesson: Lesson;
@@ -173,6 +190,8 @@ export interface NarrationStatus {
   available: boolean;
   voice: "Amanda Multilingual";
   voiceId: "en-US-AmandaMultilingualNeural";
+  reason?: "not-configured" | "authentication" | "voice-unavailable" | "service-unavailable";
+  message?: string;
 }
 export interface NarrationRequest {
   text: string;

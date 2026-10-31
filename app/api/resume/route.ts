@@ -7,7 +7,7 @@ import {
 } from "@/lib/resume";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 75;
 
 async function boundedBody(request: Request, maxBytes: number): Promise<Uint8Array> {
   const declared = Number(request.headers.get("content-length"));
@@ -44,7 +44,7 @@ async function boundedBody(request: Request, maxBytes: number): Promise<Uint8Arr
 
 export async function POST(request: Request) {
   const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
-  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(28_000)]);
+  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(68_000)]);
   try {
     const origin = request.headers.get("origin");
     // NextURL normalizes loopback addresses to localhost. Bind the browser's

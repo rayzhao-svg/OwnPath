@@ -81,13 +81,14 @@ export function createNeuralNarrationController(
     const downloading = downloads.get(text);
     if (downloading) return downloading.promise;
     const controller = new AbortController();
+    const timeout = AbortSignal.timeout(25_000);
     const task = (async () => {
       try {
         const response = await runtime.fetch("/api/narration", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text }),
-          signal: controller.signal,
+          signal: AbortSignal.any([controller.signal, timeout]),
           cache: "no-store",
         });
         if (disposed || session !== generation || controller.signal.aborted)
@@ -119,6 +120,10 @@ export function createNeuralNarrationController(
           clips.delete(oldest);
         }
         return url;
+      } catch (error) {
+        if (timeout.aborted && !controller.signal.aborted)
+          throw new Error("Amanda narration took too long. Press Play to retry, or choose a browser voice.");
+        throw error;
       } finally {
         if (downloads.get(text)?.controller === controller) downloads.delete(text);
       }

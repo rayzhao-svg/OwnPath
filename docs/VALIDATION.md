@@ -1,5 +1,31 @@
 # Learning experience validation
 
+## Course depth and narration alignment — 2026-10-31
+
+Replaced proportional line highlighting with explicit per-line narration and a visual-line index on each runtime audio frame. Short explanations now visit intermediate lines; longer explanations retain their line across several clips. New AI chapters stop at chapter boundaries, and one-chapter background preparation does not interrupt active audio. The player waits for a completed content consistency review before playing a new AI chapter. Legacy and mock narration remain compatible.
+
+New course outlines contain eight ordered chapters with objectives and stable introductions. Each chapter loads independently with seven substantive pedagogical sections, paired visual/spoken steps, derivations or mechanisms, a worked example, misconception, guided and independent practice, and synthesis. Saved shorter lessons receive deeper chapter patches without replacing quizzes, attempts, or progress. A separate bounded model review checks arithmetic, assumptions, code, and narration/display consistency, applying only targeted paired corrections within the same 75-second generation budget. This review is an additional correctness check, not a mathematical proof.
+
+Live verification produced an eight-chapter advanced simulation/Monte Carlo outline in 32.8 seconds and a reviewed 1,977-word chapter in 48.4 seconds (38,346 response bytes). Every teaching section had exact one-to-one visual/narration correspondence. Independent arithmetic checks confirmed the displayed sample means, variances, and standard errors; a 4.91-second targeted review corrected a sampling-design assumption by explicitly conditioning the illustrative sample on an iid model. The marked saved Python chapter was upgraded in the browser and its second visual line was visibly highlighted rather than skipped.
+
+Regression coverage includes 284 narration/player journeys; 99 course generation/review assertions; 122 chapter-state/client/parent assertions; and 43 context/persistence/review-wire assertions. Existing integration, assessment, resume, neural audio, and migration suites also pass. API requests use compact context under the original 64 KiB body limit while stored course content has a separate 512 KiB limit. Historical review questions are sent once, preserving the original attempt snapshot in storage.
+
+## High-hour advanced curriculum regression — 2026-10-31
+
+A follow-up report reproduced five failed curriculum attempts for an advanced reinforcement-learning goal at 40 hours/week. Safe diagnostics isolated `Invalid curriculum duration`: the Claude assembler rejected modules above 2,400 minutes despite allowing a total twelve-week budget of 28,800 minutes. The shared module validator had a separate 10,000-minute ceiling. The earlier live walkthrough used five hours/week and did not exercise this case.
+
+Curriculum duration limits now share one budget definition. Generated modules retain integer durations from 30 minutes up to the learner's full twelve-week budget; the sum must still fit that budget. Shared ingestion, persistence, and lesson-request validation accept durations up to the maximum supported budget of 28,800 minutes, preserving older one-minute modules. Workload estimates are not truncated or scaled. The prompt receives the numeric total budget explicitly. Invalid generated plans and unreachable readings now have distinct safe errors instead of suggesting an API-key problem. Temporary diagnostics were removed.
+
+Live verification of the same advanced goal at 40 hours/week returned HTTP 200 with `mode: claude` in 17.1 seconds: five modules of 2,400, 4,200, 5,400, 5,400, and 6,600 minutes, totaling 24,000 minutes within the 28,800-minute budget. Verification used a synthetic profile and did not replace the learner's saved plan. New offline regressions cover larger modules, unchanged duration estimates, client/lesson parsing, integer/minimum/global/total bounds, and existing progress.
+
+## AI reliability and Amanda connection follow-up — 2026-10-31
+
+Fixed premature provider/client deadlines, duplicate in-flight provider work, blocking source checks, quiz waiting for optional background teaching, and misleading narration availability. The shared transport allows cold structured-output setup and retries only one explicit transient HTTP rejection; it never replays an ambiguous timed-out completion. Concise grounded teaching scenes are accepted without requiring an arbitrary aggregate narration length. Code examples with more than five short lines are grouped into display steps without dropping or reordering any text.
+
+`test:requests` adds 54 browser/provider assertions for cold requests, complete-response deadlines, cancellation, coalescing, bounded overload recovery, source-check overlap/cache, and no replay after malformed completions. Existing integration, quiz, persistence, resume, detailed teaching, player, narration, resources, and direction suites pass. Zero-warning lint, TypeScript, production build, and whitespace checks pass. The isolated mock HTTP suites pass 832 route/contract, 174 resume-to-review, and 166 enhancement assertions.
+
+Live synthetic browser checks verified a one-click Claude curriculum in 20.3 seconds, a lesson in 18.1 seconds, five fresh quiz questions in 8.2 seconds, a contextual tutor response in 3.5 seconds, and the corrected four-slide teaching expansion in 16.6 seconds. The existing Azure Speech resource was connected locally using its actual region. Its regional catalog confirms Amanda, and a short narration returned HTTP 200 audio/mpeg (46,944 bytes) in about one second. Secrets remain in ignored `.env.local` with owner-only file permissions and are not in repository changes or test output.
+
 ## Working-copy verification — 2026-10-31
 
 The final working copy passes zero-warning lint, TypeScript checks, the production Webpack build, and whitespace checks. The offline suites passed **1,869 assertions**:

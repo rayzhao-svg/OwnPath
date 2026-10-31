@@ -1,3 +1,4 @@
+import { MAX_MODULE_DURATION_MINUTES, MAX_WEEKLY_STUDY_HOURS } from "@/lib/curriculum-budget";
 import type {
   ApiError,
   ChatRequest,
@@ -102,7 +103,7 @@ export function assertProfile(value: unknown): asserts value is LearnerProfile {
     );
   textValue(value.goals, "profile.goals");
   textList(value.skills, "profile.skills", 30, 100);
-  finiteNumber(value.availableStudyTime, "profile.availableStudyTime", 1, 40);
+  finiteNumber(value.availableStudyTime, "profile.availableStudyTime", 1, MAX_WEEKLY_STUDY_HOURS);
   enumValue(
     value.track,
     ["data-science", "web-development", "product-design"],
@@ -142,7 +143,7 @@ export function assertModule(value: unknown): asserts value is Module {
   value.resources.forEach((item, index) =>
     assertResource(item, `module.resources[${index}]`),
   );
-  finiteNumber(value.estimatedDuration, "module.estimatedDuration", 1, 10000);
+  finiteNumber(value.estimatedDuration, "module.estimatedDuration", 1, MAX_MODULE_DURATION_MINUTES);
   enumValue(
     value.status,
     ["not-started", "in-progress", "completed", "locked"],
@@ -160,7 +161,7 @@ export function assertStudyPlan(value: unknown): asserts value is StudyPlan {
   // Existing mock summaries can contain all three bounded profile text fields.
   textValue(value.summary, "plan.summary", 8000);
   enumValue(value.track, ["data-science", "web-development", "product-design"], "plan.track");
-  finiteNumber(value.weeklyStudyHours, "plan.weeklyStudyHours", 1, 40);
+  finiteNumber(value.weeklyStudyHours, "plan.weeklyStudyHours", 1, MAX_WEEKLY_STUDY_HOURS);
   textValue(value.generatedAt, "plan.generatedAt", 100);
   if (!Number.isFinite(Date.parse(value.generatedAt)))
     fail("plan.generatedAt must be a valid timestamp.");
@@ -191,15 +192,23 @@ export function assertStudyPlan(value: unknown): asserts value is StudyPlan {
 
 export function assertTeachingScene(value: unknown, path = "scene"): asserts value is TeachingScene {
   record(value, path);
-  if (Object.keys(value).length !== 3 || !["title", "narration", "visual"].every((key) => Object.hasOwn(value, key)))
-    fail(`${path} must contain only title, narration, and visual.`);
+  if (Object.keys(value).some((key) => !["title", "narration", "visual", "role", "lineNarrations"].includes(key)) ||
+      !["title", "narration", "visual"].every((key) => Object.hasOwn(value, key)))
+    fail(`${path} contains unsupported teaching fields.`);
   textValue(value.title, `${path}.title`, 80);
-  textValue(value.narration, `${path}.narration`, 700);
+  textValue(value.narration, `${path}.narration`, 4000);
+  if (value.role !== undefined)
+    enumValue(value.role, ["prerequisites", "concept", "reasoning", "worked-example", "pitfall", "guided-practice", "independent-practice", "recap"], `${path}.role`);
   record(value.visual, `${path}.visual`);
   if (Object.keys(value.visual).length !== 2 || !Object.hasOwn(value.visual, "kind") || !Object.hasOwn(value.visual, "lines"))
     fail(`${path}.visual must contain only kind and lines.`);
   enumValue(value.visual.kind, ["concept", "code", "calculation", "comparison"], `${path}.visual.kind`);
-  textList(value.visual.lines, `${path}.visual.lines`, 5, 250, 1);
+  textList(value.visual.lines, `${path}.visual.lines`, 8, 350, 1);
+  if (value.lineNarrations !== undefined) {
+    textList(value.lineNarrations, `${path}.lineNarrations`, 8, 2000, 1);
+    if (value.lineNarrations.length !== value.visual.lines.length || value.lineNarrations.join(" ") !== value.narration)
+      fail(`${path} must align each visual step with its exact narration.`);
+  }
 }
 
 function assertSlide(value: unknown, path: string): asserts value is Slide {
@@ -207,7 +216,11 @@ function assertSlide(value: unknown, path: string): asserts value is Slide {
   textValue(value.id, `${path}.id`, 100);
   textValue(value.title, `${path}.title`, 200);
   textList(value.bullets, `${path}.bullets`, 10, 2000, 1);
-  textValue(value.narration, `${path}.narration`, 5000);
+  textValue(value.narration, `${path}.narration`, 32000);
+  if (value.overview !== undefined) textValue(value.overview, `${path}.overview`, 5000);
+  if (value.learningObjective !== undefined) textValue(value.learningObjective, `${path}.learningObjective`, 600);
+  if (value.teachingVersion !== undefined && value.teachingVersion !== 2) fail(`${path}.teachingVersion is unsupported.`);
+  if (value.qualityVersion !== undefined && value.qualityVersion !== 1) fail(`${path}.qualityVersion is unsupported.`);
   if (value.scenes !== undefined) {
     list(value.scenes, `${path}.scenes`, 10, 1);
     value.scenes.forEach((scene, index) => assertTeachingScene(scene, `${path}.scenes[${index}]`));
@@ -235,6 +248,7 @@ function assertQuestion(
 }
 export function assertLesson(value: unknown): asserts value is Lesson {
   record(value, "lesson");
+  if (value.teachingVersion !== undefined && value.teachingVersion !== 2) fail("lesson.teachingVersion is unsupported.");
   textValue(value.id, "lesson.id", 100);
   textValue(value.moduleId, "lesson.moduleId", 100);
   textValue(value.title, "lesson.title", 200);

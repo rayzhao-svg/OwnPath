@@ -7,7 +7,7 @@ import {
 } from "@/lib/validation";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 75;
 
 export async function POST(request: Request) {
   try {

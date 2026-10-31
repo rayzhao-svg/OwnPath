@@ -69,10 +69,11 @@ function curriculumDraft() {
 }
 function lectureDraft() {
   return {
-    slides: ['Purpose and foundations', 'Explain the core idea', 'Worked example', 'Practice and reflect'].map((title, index) => ({
-      title, bullets: [`Understand analysis step ${index + 1}.`, 'For example, 8 of 10 customers remain: retention is 80%.'],
-      narration: 'Count retained customers, then divide by the total. Eight divided by ten is 0.8, or 80 percent. Check that the same time window is used for both counts.',
-    })),
+    chapters: Object.fromEntries(['Retention counts', 'Consistent time windows', 'Customer cohorts', 'Calculate retention', 'Compare cohorts', 'Check missing customers', 'Interpret uncertainty', 'Plan the next analysis'].map((title, index) => [`chapter${index + 1}`, {
+      title, learningObjective: `Explain and apply retention analysis step ${index + 1}.`,
+      bullets: [`Understand analysis step ${index + 1}.`, 'For example, 8 of 10 customers remain: retention is 80%.'],
+      overview: 'Count retained customers, then divide by the total. Eight divided by ten is 0.8, or 80 percent. Check that the same time window is used for both counts.',
+    }])),
     quiz: ['Calculate retention', 'Choose a denominator', 'Check the time window'].map((question, index) => ({
       question, options: ['Eight of ten is 80 percent', 'Eight of ten is 8 percent', 'No denominator is needed', 'Time windows never matter'],
       correctAnswer: 0, explanation: `Review ${index + 1}: eight divided by ten is 0.8; use consistent counts and windows.`,
@@ -125,13 +126,14 @@ async function fullFlow() {
     const lesson = generated.data.lesson; assertLesson(lesson); assertions++;
     equal(lesson.moduleId, learningModule.id, 'Module relationship preserved'); equal(lesson.title, learningModule.title, 'Selected module title preserved');
     equal(calls.at(-1).payload.module.topics, learningModule.topics, 'Selected module topics reach lecture author');
-    check(lesson.slides.length >= 4 && lesson.slides.length <= 6, 'Four to six slides'); equal(lesson.quiz.length, 3, 'Three quizzes');
+    check(lesson.slides.length >= 8 && lesson.slides.length <= 12, 'Eight to twelve ordered course chapters'); equal(lesson.quiz.length, 3, 'Three quizzes');
     lessons.push(lesson);
   }
   const lesson = lessons[0], firstQuestion = `[OwnPath slide: ${lesson.slides[0].id}]\nExplain the example.`;
   const chatted = await post('chat', { lesson, question: firstQuestion, messages: [] });
   equal(chatted.status, 200, 'Tutor accepts generated lecture'); equal(chatted.data.mode, 'claude', 'Tutor reports Claude');
-  equal(calls.at(-1).payload.currentSlide, lesson.slides[0], 'Tutor receives active slide');
+  equal(calls.at(-1).payload.currentSlide.id, lesson.slides[0].id, 'Tutor receives the active chapter identity');
+  equal(calls.at(-1).payload.currentSlide.narration, lesson.slides[0].narration, 'Tutor receives the active chapter teaching');
   const history = [{ id: 'user-1', role: 'user', content: firstQuestion }, chatted.data.message];
   const followed = await post('chat', { lesson, question: `[OwnPath slide: ${lesson.slides[1].id}]\nHow does that relate to this slide?`, messages: history });
   equal(followed.status, 200, 'Follow-up succeeds after navigation');
@@ -321,11 +323,50 @@ async function persistenceJourneys(plan, lesson) {
   provider().saveLesson(currentLesson, 'mock', newPlan.id);
   equal(provider().state.lessonModes[currentLesson.moduleId], 'mock', 'Current mock lesson retains its actual mode');
 }
+
+async function longModulePersistence(plan, lesson) {
+  const longProfile = { ...profile, availableStudyTime: 40 };
+  const longPlan = clone(plan);
+  longPlan.weeklyStudyHours = 40;
+  longPlan.modules[0].estimatedDuration = 11000;
+  longPlan.modules[0].status = 'completed';
+  longPlan.modules[1].status = 'not-started';
+  const passed = {
+    lessonId: lesson.id, moduleId: lesson.moduleId,
+    correctAnswers: lesson.quiz.length, totalQuestions: lesson.quiz.length,
+    score: 100, passed: true, completedAt: '2026-10-31T12:00:00.000Z',
+    answers: Object.fromEntries(lesson.quiz.map(question => [question.id, question.correctAnswer])),
+    missedQuestionIds: [], questions: clone(lesson.quiz),
+  };
+  const saved = {
+    version: 1, profile: longProfile, plan: longPlan,
+    lessons: { [lesson.moduleId]: lesson },
+    quizResults: { [lesson.moduleId]: passed },
+    latestQuizResults: { [lesson.moduleId]: passed },
+    quizHistory: { [lesson.moduleId]: [passed] },
+    planMode: 'claude', lessonModes: { [lesson.moduleId]: 'claude' },
+    planGeneration: 'saved-long-module-generation',
+  };
+  const client = load('lib/api-client.ts');
+  global.fetch = async () => Response.json({ plan: longPlan, mode: 'claude' });
+  equal((await client.requestPlanResponse(longProfile)).plan, longPlan, 'The onboarding client accepts a module above the former 10000-minute limit');
+  const { restoreForTest } = load('lib/learning-context.tsx');
+  const restored = restoreForTest(JSON.stringify(saved));
+  check(restored !== null, 'A forty-hour saved curriculum with a long module restores');
+  equal(restored.plan.modules[0].estimatedDuration, 11000, 'Restoration preserves the exact long-module duration');
+  equal(restored.plan.modules.map(module => module.status), longPlan.modules.map(module => module.status), 'Restoration retains completed work and its unlocked successor');
+  equal(restored.plan.modules.filter(module => module.status === 'completed').length, 1, 'The existing completed module remains completed');
+  equal(restored.lessons[lesson.moduleId], lesson, 'The completed long module retains its saved lesson');
+  equal(restored.quizResults[lesson.moduleId], passed, 'The completed long module retains its exact passing score and answers');
+  equal(restored.latestQuizResults[lesson.moduleId], passed, 'Long-module restoration retains current assessment diagnostics');
+  equal(restored.quizHistory[lesson.moduleId], [passed], 'Long-module restoration retains assessment history');
+  equal(restored.planGeneration, saved.planGeneration, 'Long-module restoration retains the existing curriculum generation');
+}
 const originalFetch = global.fetch, originalKey = process.env.ANTHROPIC_API_KEY;
 (async () => {
   try {
     const { plan, lesson } = await fullFlow();
-    graphValidation(plan); await fallbacksAndFailures(lesson); await clientValidation(plan, lesson); await learnerProfiles(); await persistenceJourneys(plan, lesson);
+    graphValidation(plan); await fallbacksAndFailures(lesson); await clientValidation(plan, lesson); await learnerProfiles(); await persistenceJourneys(plan, lesson); await longModulePersistence(plan, lesson);
     console.log(`PASS ${assertions} integration assertions: plan → lesson → slide-aware tutor → quiz → persisted progress; mocks, graph validation, and safe provider failures.`);
     console.log('Provider transport was stubbed; this test makes no live API calls.');
   } finally {

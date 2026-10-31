@@ -351,8 +351,13 @@ export function LearningProvider({ children }: { children: React.ReactNode }) {
         title: slide.title,
         narration: slide.narration,
         bullets: [...slide.bullets],
+        ...(slide.overview ? { overview: slide.overview } : {}),
+        ...(slide.learningObjective ? { learningObjective: slide.learningObjective } : {}),
+        ...(slide.teachingVersion ? { teachingVersion: slide.teachingVersion } : {}),
+        ...(slide.qualityVersion ? { qualityVersion: slide.qualityVersion } : {}),
         ...(slide.scenes ? { scenes: slide.scenes.map((scene) => ({
           ...scene, visual: { ...scene.visual, lines: [...scene.visual.lines] },
+          ...(scene.lineNarrations ? { lineNarrations: [...scene.lineNarrations] } : {}),
         })) } : {}),
       }));
       const updated = { ...current, slides };

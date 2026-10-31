@@ -4,7 +4,7 @@ import { DEFAULT_QUIZ_QUESTION_COUNT, isQuizQuestionCount } from "@/lib/quiz-ref
 import { ApiFailure, assertLesson, errorResponse, readJsonBody } from "@/lib/validation";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 75;
 const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
 
 function parseRequest(value: unknown): QuizRefreshRequest {

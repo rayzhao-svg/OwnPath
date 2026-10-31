@@ -1,10 +1,11 @@
 import type { Lesson } from "@/lib/types";
 
-/** Leave space for quiz snapshots and request metadata under the 64 KiB API cap. */
+export const MAX_STORED_LESSON_BYTES = 512 * 1024;
+
+/** Stored teaching is separate from the compact context sent to bounded APIs. */
 export function assertLessonRequestBudget(lesson: Lesson): void {
   const encoder = new TextEncoder();
   const lessonBytes = encoder.encode(JSON.stringify(lesson)).byteLength;
-  const quizBytes = encoder.encode(JSON.stringify(lesson.quiz)).byteLength;
-  if (lessonBytes > 48 * 1024 || lessonBytes + quizBytes > 56 * 1024)
-    throw new Error("The combined lesson and questions are too long to save safely. Your current lesson and scores are unchanged. Please try generating a shorter question set.");
+  if (lessonBytes > MAX_STORED_LESSON_BYTES)
+    throw new Error("This course is too large to save safely. Your current course and scores are unchanged.");
 }

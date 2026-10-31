@@ -4,22 +4,39 @@ import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } fro
 import { Icon } from "@/components/icon";
 import { chooseNarrationVoice } from "@/lib/narration-voice";
 import { createNeuralNarrationController, type NeuralNarrationController, type NeuralNarrationState } from "@/lib/neural-narration";
-import { createTeachingFrames, getTeachingScenes } from "@/lib/teaching-scenes";
-import type { Lesson } from "@/lib/types";
+import { createTeachingFrames, getTeachingScenes, teachingLineNarrations } from "@/lib/teaching-scenes";
+import type { Lesson, Slide } from "@/lib/types";
 
 const VOICE_PREFERENCE_KEY = "ownpath:narration-voice:v1";
 const NARRATION_SOURCE_KEY = "ownpath:narration-source:v1";
+const SCENE_ROLES = {
+  prerequisites: "Before you start", concept: "Core concept", reasoning: "Why it works",
+  "worked-example": "Worked example", pitfall: "Common mistake", "guided-practice": "Guided practice",
+  "independent-practice": "Try it yourself", recap: "Recap",
+};
+
+function teachingContent(slide: Slide) {
+  // Persistence may rebuild objects in another property order. Only actual
+  // teaching changes should replace the active audio/caption sequence.
+  return [slide.id, slide.title, slide.bullets, slide.narration, slide.overview,
+    slide.learningObjective, slide.teachingVersion, slide.qualityVersion, slide.scenes?.map((scene) =>
+      [scene.title, scene.narration, scene.role, scene.lineNarrations, scene.visual.kind, scene.visual.lines])];
+}
 
 export function LecturePlayer({
   lesson,
   slideIndex,
   onSlideChange,
   pauseNarrationRef,
+  chapterLoading = false,
+  requireDetailedChapter = false,
 }: {
   lesson: Lesson;
   slideIndex: number;
   onSlideChange: (index: number) => void;
   pauseNarrationRef: RefObject<(() => void) | null>;
+  chapterLoading?: boolean;
+  requireDetailedChapter?: boolean;
 }) {
   const [playback, setPlaybackState] = useState<NeuralNarrationState>("idle");
   const playbackRef = useRef<NeuralNarrationState>("idle");
@@ -30,6 +47,8 @@ export function LecturePlayer({
   const [source, setSource] = useState<"amanda" | "browser">("amanda");
   const sourceRef = useRef<"amanda" | "browser">("amanda");
   const [availability, setAvailability] = useState<"checking" | "ready" | "unavailable">("checking");
+  const [connectionNotice, setConnectionNotice] = useState("");
+  const connectionAttemptRef = useRef(0);
   const [rate, setRate] = useState(1);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [preferredVoiceURI, setPreferredVoiceURI] = useState("");
@@ -38,8 +57,20 @@ export function LecturePlayer({
   const neuralRef = useRef<NeuralNarrationController | null>(null);
   const onSlideChangeRef = useRef(onSlideChange);
   const activeSlideRef = useRef(slideIndex);
-  const frames = useMemo(() => createTeachingFrames(lesson.slides), [lesson.slides]);
-  const sequenceKey = useMemo(() => JSON.stringify([lesson.id, lesson.slides]), [lesson.id, lesson.slides]);
+  const slide = lesson.slides[slideIndex];
+  const chapterMode = requireDetailedChapter || lesson.teachingVersion === 2 || lesson.slides.some((item) => item.teachingVersion === 2);
+  const chapterReady = !chapterMode || (slide?.teachingVersion === 2 &&
+    (!requireDetailedChapter || slide.qualityVersion === 1));
+  const frames = useMemo(() => chapterMode
+    ? slide ? createTeachingFrames([slide]).map((frame) => ({ ...frame, slideIndex })) : []
+    : createTeachingFrames(lesson.slides), [chapterMode, slide, slideIndex, lesson.slides]);
+  // Loading another chapter must not replace the active chapter's media session.
+  const sequenceKey = JSON.stringify([lesson.id, chapterMode ? slideIndex : null,
+    (chapterMode ? slide ? [slide] : [] : lesson.slides).map(teachingContent)]);
+  const completionNotice = chapterMode ? slideIndex + 1 < lesson.slides.length
+    ? "Chapter complete. Continue to the next chapter when you’re ready."
+    : "You’ve reached the end of this course. Try the knowledge check below."
+    : "You’ve reached the end of this lecture. Try the knowledge check below.";
   const [framePosition, setFramePosition] = useState({ key: "", index: 0 });
   const framesRef = useRef(frames);
   const sequenceKeyRef = useRef(sequenceKey);
@@ -47,15 +78,15 @@ export function LecturePlayer({
   const frameIndex = frames[candidateIndex]?.slideIndex === slideIndex ? candidateIndex
     : Math.max(0, frames.findIndex((item) => item.slideIndex === slideIndex));
   const frame = frames[frameIndex];
-  const slide = lesson.slides[slideIndex];
   const scenes = slide ? getTeachingScenes(slide) : [];
   const scene = frame?.scene;
   const sceneFrames = frame ? frames.filter((item) => item.slideIndex === slideIndex && item.sceneIndex === frame.sceneIndex) : [];
   const sceneFrameIndex = frame ? sceneFrames.indexOf(frame) : 0;
-  const activeLine = scene ? sceneFrames.length === 1 ? scene.visual.lines.length - 1
-    : Math.round(sceneFrameIndex * (scene.visual.lines.length - 1) / Math.max(1, sceneFrames.length - 1)) : 0;
+  const activeLine = frame?.visualLineIndex ?? 0;
   const selectedVoice = chooseNarrationVoice(voices, preferredVoiceURI);
   const recommendedVoice = chooseNarrationVoice(voices);
+  const installedAmanda = voices.find((voice) => /^en(?:[-_]|$)/i.test(voice.lang) && /amanda[\s_-]*multilingual/i.test(`${voice.name} ${voice.voiceURI}`));
+  const usingInstalledAmanda = source === "amanda" && availability === "unavailable" && !!installedAmanda;
   const englishVoices = voices
     .filter((voice) => /^en(?:[-_]|$)/i.test(voice.lang))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -75,7 +106,8 @@ export function LecturePlayer({
     const controller = createNeuralNarrationController({
       onState: setPlayback,
       onSlideChange: showFrame,
-      onNotice: setNotice,
+      onNotice: (message) => setNotice(message === "You’ve reached the end of this lecture. Try the knowledge check below."
+        ? completionNotice : message),
     });
     neuralRef.current = controller;
     queueMicrotask(() => { if (neuralRef.current === controller) setPlayback("idle"); });
@@ -85,7 +117,7 @@ export function LecturePlayer({
       if ("speechSynthesis" in window) window.speechSynthesis.cancel();
       if (neuralRef.current === controller) neuralRef.current = null;
     };
-  }, [sequenceKey, setPlayback, showFrame]);
+  }, [sequenceKey, completionNotice, setPlayback, showFrame]);
 
   useEffect(() => {
     // Tutor and review links can change the chapter outside this player's controls.
@@ -98,19 +130,32 @@ export function LecturePlayer({
   }, [slideIndex, setPlayback]);
 
   const checkConnection = useCallback(async (signal?: AbortSignal) => {
+    const attempt = ++connectionAttemptRef.current;
     setAvailability("checking");
+    setConnectionNotice("");
+    const timeout = AbortSignal.timeout(8_000);
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     try {
-      const response = await fetch("/api/narration", { cache: "no-store", signal });
+      const response = await fetch("/api/narration", { cache: "no-store", signal: combined });
       const status: unknown = await response.json();
-      if (signal?.aborted) return;
+      if (signal?.aborted || attempt !== connectionAttemptRef.current) return;
       const available = response.ok && status !== null && typeof status === "object" &&
         "available" in status && status.available === true &&
         "voiceId" in status && status.voiceId === "en-US-AmandaMultilingualNeural";
       setAvailability(available ? "ready" : "unavailable");
+      if (!available) setConnectionNotice(status !== null && typeof status === "object" && "message" in status && typeof status.message === "string"
+        ? status.message.slice(0, 400)
+        : response.ok ? "Amanda narration is waiting for setup. Add an Azure Speech key and matching region in the server settings, or choose a browser voice."
+        : "Amanda’s connection could not be checked. Try again, or choose a browser voice.");
     } catch {
-      if (!signal?.aborted) setAvailability("unavailable");
+      if (!signal?.aborted && attempt === connectionAttemptRef.current) {
+        setAvailability("unavailable");
+        setConnectionNotice(timeout.aborted ? "Checking Amanda’s connection took too long. Try again, or choose a browser voice."
+          : "Amanda’s connection could not be checked. Check your network, then try again or choose a browser voice.");
+      }
     }
   }, []);
+  const invalidateConnectionChecks = useCallback(() => { connectionAttemptRef.current++; }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -125,8 +170,8 @@ export function LecturePlayer({
       } catch { /* Amanda remains the default when storage is unavailable. */ }
       void checkConnection(controller.signal);
     });
-    return () => controller.abort();
-  }, [checkConnection]);
+    return () => { invalidateConnectionChecks(); controller.abort(); };
+  }, [checkConnection, invalidateConnectionChecks]);
 
   useEffect(() => {
     if (!("speechSynthesis" in window)) return;
@@ -154,12 +199,12 @@ export function LecturePlayer({
 
   useEffect(() => {
     const pause = () => {
-      if (sourceRef.current === "amanda" && playbackRef.current !== "idle") {
-        neuralRef.current?.pause();
-        setNotice("Narration paused for your question. Resume when you’re ready.");
-      } else if (utteranceRef.current && "speechSynthesis" in window) {
+      if (utteranceRef.current && "speechSynthesis" in window) {
         window.speechSynthesis.pause();
         setPlayback("paused");
+        setNotice("Narration paused for your question. Resume when you’re ready.");
+      } else if (sourceRef.current === "amanda" && playbackRef.current !== "idle") {
+        neuralRef.current?.pause();
         setNotice("Narration paused for your question. Resume when you’re ready.");
       }
     };
@@ -179,11 +224,10 @@ export function LecturePlayer({
       };
       const hidePage = () => {
         if (document.hidden && playbackRef.current !== "idle") {
-          if (sourceRef.current === "amanda") neuralRef.current?.pause();
-          else if (utteranceRef.current && "speechSynthesis" in window) {
+          if (utteranceRef.current && "speechSynthesis" in window) {
             window.speechSynthesis.pause();
             setPlayback("paused");
-          }
+          } else if (sourceRef.current === "amanda") neuralRef.current?.pause();
           setNotice("Narration paused while you were away. Resume when you’re ready.");
         }
       };
@@ -209,7 +253,10 @@ export function LecturePlayer({
   function changeSlide(index: number) {
     if (index < 0 || index >= lesson.slides.length) return;
     stopNarration();
-    showFrame(frames.findIndex((item) => item.slideIndex === index));
+    if (chapterMode) {
+      activeSlideRef.current = index;
+      onSlideChangeRef.current(index);
+    } else showFrame(frames.findIndex((item) => item.slideIndex === index));
     setNotice("");
   }
 
@@ -221,7 +268,11 @@ export function LecturePlayer({
   }
 
   function togglePlayback() {
-    if (source === "amanda") {
+    if (!chapterReady) {
+      setNotice("This chapter’s full teaching is being prepared. Start narration when it is ready.");
+      return;
+    }
+    if (source === "amanda" && !usingInstalledAmanda) {
       if (availability !== "ready") {
         setNotice("Amanda is not connected yet. You can read the transcript or choose a browser voice.");
         return;
@@ -260,7 +311,7 @@ export function LecturePlayer({
       if (!currentFrame) return;
       const utterance = new SpeechSynthesisUtterance(currentFrame.narration);
       utterance.rate = rate;
-      const voice = chooseNarrationVoice(speech.getVoices?.() ?? voices, preferredVoiceURI);
+      const voice = usingInstalledAmanda ? installedAmanda : chooseNarrationVoice(speech.getVoices?.() ?? voices, preferredVoiceURI);
       if (voice) utterance.voice = voice;
       utterance.lang = voice?.lang || "en-US";
       utteranceRef.current = utterance;
@@ -273,7 +324,7 @@ export function LecturePlayer({
           utteranceRef.current = null;
           setPlayback("idle");
           setNotice(
-            "You’ve reached the end of this lecture. Try the knowledge check below.",
+            completionNotice,
           );
         }
       };
@@ -323,9 +374,10 @@ export function LecturePlayer({
             {slideIndex === 0 ? "Let’s get started" : "One idea at a time"}
           </span>
           <h2>{slide.title}</h2>
+          {slide.learningObjective && <p className="teaching-objective"><strong>Learning objective: </strong>{slide.learningObjective}</p>}
           {scene && frame && <>
             <div className="teaching-scene-heading">
-              <span>STEP {String(frame.sceneIndex + 1).padStart(2, "0")} / {String(scenes.length).padStart(2, "0")}</span>
+              <span>STEP {String(frame.sceneIndex + 1).padStart(2, "0")} / {String(scenes.length).padStart(2, "0")}{scene.role ? ` · ${SCENE_ROLES[scene.role]}` : ""}</span>
               <h3>{scene.title}</h3>
             </div>
             <div className={`teaching-visual teaching-visual-${scene.visual.kind}`} key={`${sequenceKey}:${slideIndex}:${frame.sceneIndex}`} aria-label={`${scene.visual.kind} illustration`}>
@@ -334,6 +386,7 @@ export function LecturePlayer({
                 {scene.visual.lines.map((line, index) => <div
                   className={`teaching-visual-line${index === activeLine ? " is-active" : index < activeLine ? " is-complete" : " is-next"}`}
                   key={index}
+                  aria-current={index === activeLine ? "step" : undefined}
                 >
                   <span className="teaching-line-number">{String(index + 1).padStart(2, "0")}</span>
                   {scene.visual.kind === "code" ? <code>{line}</code> : <span>{line}</span>}
@@ -363,7 +416,7 @@ export function LecturePlayer({
           type="button"
           className="lecture-play"
           onClick={togglePlayback}
-          disabled={source === "amanda" && availability !== "ready"}
+          disabled={!chapterReady || (source === "amanda" && availability !== "ready" && !usingInstalledAmanda)}
           aria-label={
             playback === "playing" || playback === "loading"
               ? "Pause narration"
@@ -376,7 +429,8 @@ export function LecturePlayer({
         </button>
         <div className="lecture-playback-info">
           <strong>
-            {playback === "loading"
+            {!chapterReady ? chapterLoading ? "Preparing this chapter…" : "Full chapter teaching is not ready yet"
+              : playback === "loading"
               ? "Preparing Amanda’s narration…"
               : playback === "playing"
               ? "Listening & learning"
@@ -385,7 +439,7 @@ export function LecturePlayer({
                 : "Listen to this lesson"}
           </strong>
           <span>
-            {source === "amanda" ? "Amanda Multilingual" : selectedVoice?.name || "Browser narration"} · slide {slideIndex + 1} of {lesson.slides.length}{frame ? ` · step ${frame.sceneIndex + 1} of ${scenes.length}` : ""}
+            {source === "amanda" ? `Amanda Multilingual${usingInstalledAmanda ? " · browser voice" : ""}` : selectedVoice?.name || "Browser narration"} · {chapterMode ? "chapter" : "slide"} {slideIndex + 1} of {lesson.slides.length}{frame ? ` · step ${frame.sceneIndex + 1} of ${scenes.length}` : ""}
           </span>
         </div>
         <label className="lecture-speed">
@@ -394,7 +448,7 @@ export function LecturePlayer({
             value={rate}
             onChange={(event) => {
               const nextRate = Number(event.target.value);
-              if (source === "amanda") neuralRef.current?.setRate(nextRate);
+              if (source === "amanda" && !usingInstalledAmanda) neuralRef.current?.setRate(nextRate);
               else stopNarration();
               setRate(nextRate);
             }}
@@ -438,7 +492,7 @@ export function LecturePlayer({
               }
             }}
           >
-            <option value="amanda">Amanda Multilingual{availability === "unavailable" ? " · not connected" : ""}</option>
+            <option value="amanda">Amanda Multilingual{usingInstalledAmanda ? " · browser voice" : availability === "unavailable" ? " · not connected" : ""}</option>
             <optgroup label="Browser voices">
             <option value="browser">Browser narration{recommendedVoice ? ` · ${recommendedVoice.name}` : ""}</option>
             {englishVoices.map((voice) => (
@@ -451,8 +505,10 @@ export function LecturePlayer({
         </label>
       {source === "amanda" && availability !== "ready" && (
         <p className="lecture-notice" role="status">
-          {availability === "checking" ? "Checking Amanda’s connection…" : "Amanda narration is waiting for setup. You can read the transcript or choose a browser voice."}
-          {availability === "unavailable" && <button type="button" className="narration-reconnect" onClick={() => { void checkConnection(); }}>Check connection</button>}
+          {availability === "checking" ? "Checking Amanda’s connection…" : usingInstalledAmanda
+            ? "Using Amanda Multilingual from your browser’s installed voices. Cloud narration is unavailable."
+            : connectionNotice}
+          {availability === "unavailable" && <button type="button" className="narration-reconnect" onClick={() => { stopNarration(); setNotice(""); void checkConnection(); }}>Check connection</button>}
         </p>
       )}
       <div
@@ -508,7 +564,7 @@ export function LecturePlayer({
         </summary>
         {scenes.map((item, index) => <div className="teaching-transcript-part" key={index}>
           <h3>{index + 1}. {item.title}</h3>
-          <p>{item.narration}</p>
+          {teachingLineNarrations(item).map((narration, lineIndex) => <p key={lineIndex}>{narration}</p>)}
         </div>)}
       </details>
     </section>

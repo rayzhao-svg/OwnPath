@@ -120,11 +120,37 @@ const originalFetch = global.fetch, originalKey = process.env.ANTHROPIC_API_KEY;
     equal(frames[0].scene, result.lesson.slides[0].scenes[0], 'Each frame carries the matching authored visual');
     check(frames.length > result.lesson.slides.length * 3, 'Each scene has short evolving caption beats rather than one static screen per slide');
 
+    const concise = teachingDraft();
+    concise.slides.forEach(slide => slide.scenes.forEach(scene => {
+      scene.narration = scene.narration.split(/(?<=\.)\s+/).slice(0, 2).join(' ');
+    }));
+    check(concise.slides.every(slide => slide.scenes.map(scene => scene.narration).join(' ').length < 650), 'Concise authored teaching reproduces the former arbitrary length rejection');
+    provider(concise);
+    const conciseResponse = await post();
+    equal(conciseResponse.status, 200, 'Useful concise scenes with worked visuals succeed on the first response');
+    const conciseResult = await conciseResponse.json();
+    equal(conciseResult.lesson.slides.map(slide => slide.scenes), concise.slides.map(slide => slide.scenes), 'Concise teaching and its exact visual steps are preserved');
+
+    const multiline = teachingDraft();
+    const codeLines = ['SELECT customer_id,', '  COUNT(*) AS order_count', 'FROM orders', "WHERE status = 'paid'", 'GROUP BY customer_id', 'HAVING COUNT(*) >= 2', 'ORDER BY order_count DESC;'];
+    multiline.slides[0].scenes[1].visual = { kind: 'Code', lines: codeLines };
+    provider(multiline);
+    const multilineResponse = await post();
+    equal(multilineResponse.status, 200, 'A useful seven-line code example succeeds without another provider generation');
+    const multilineResult = await multilineResponse.json();
+    const packed = multilineResult.lesson.slides[0].scenes[1].visual;
+    equal(packed.kind, 'code', 'Presentation enum casing is normalized');
+    equal(packed.lines.length, 5, 'Adjacent display lines fit the supported five-step visual');
+    check(packed.lines.every(line => line.length <= 250), 'Packed visual steps retain the existing size bound');
+    equal(packed.lines.join('\n'), codeLines.join('\n'), 'All code statements, indentation, results, and order are preserved exactly');
+
     const mutations = [
       draft => { draft.slides.reverse(); },
       draft => { draft.slides[0].id = 'invented-slide'; },
       draft => { draft.slides[0].scenes = draft.slides[0].scenes.slice(0, 2); },
       draft => { draft.slides[0].scenes[0].visual.kind = 'html'; },
+      draft => { draft.slides[0].scenes[0].visual.lines = 'Not an array'; },
+      draft => { draft.slides[0].scenes[0].visual.lines = Array(6).fill('x'.repeat(200)); },
       draft => { draft.slides[0].scenes[0].visual.lines = ['Only one line']; },
       draft => { draft.slides[0].scenes[0].narration = 'x'.repeat(701); },
       draft => { draft.slides[0].scenes.forEach(scene => { scene.narration = 'Too short.'; }); },

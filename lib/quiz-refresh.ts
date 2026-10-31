@@ -1,5 +1,6 @@
 import type { Lesson, QuizQuestion, QuizRefreshResponse } from "@/lib/types";
 import { ApiFailure, assertLesson } from "@/lib/validators";
+import { assertLessonRequestBudget } from "@/lib/lesson-budget";
 
 export const QUIZ_QUESTION_COUNTS = [5, 6, 7, 8, 9, 10] as const;
 export const DEFAULT_QUIZ_QUESTION_COUNT = 5;
@@ -51,11 +52,7 @@ export function assertQuizRefreshResponse(
       throw new ApiFailure("VALIDATION_ERROR", "The new questions were not grounded in this lesson. Please try again.");
   }
   const encoder = new TextEncoder();
-  const quizBytes = encoder.encode(JSON.stringify(questions)).byteLength;
-  const lessonBytes = encoder.encode(JSON.stringify({ ...lesson, quiz: questions })).byteLength;
-  // Reviews send the teaching lesson and the attempt's question snapshot. Reserve
-  // space for both plus result metadata beneath the shared 64 KiB request limit.
-  if (encoder.encode(JSON.stringify(response)).byteLength > 24 * 1024 ||
-      lessonBytes > 48 * 1024 || lessonBytes + quizBytes > 56 * 1024)
+  if (encoder.encode(JSON.stringify(response)).byteLength > 24 * 1024)
     throw new ApiFailure("VALIDATION_ERROR", "The new questions were too long. Please try again.");
+  assertLessonRequestBudget({ ...lesson, quiz: questions });
 }

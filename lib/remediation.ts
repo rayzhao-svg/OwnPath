@@ -100,8 +100,7 @@ export function diagnoseMistakes(lesson: Lesson, result: QuizResult): QuizMistak
       slide,
       index,
       score: overlap(query, words(slide.title)) * 4 +
-        overlap(query, words(slide.bullets.join(" "))) * 2 +
-        overlap(query, words(slide.narration)),
+        overlap(query, words(slide.bullets.join(" "))) * 2,
     }));
     scores.sort((a, b) => b.score - a.score || a.index - b.index);
     const slide = scores[0].slide;

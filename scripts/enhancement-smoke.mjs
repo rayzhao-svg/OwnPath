@@ -103,7 +103,11 @@ try {
   await request('lesson/detail', { lesson, module: { ...learningModule, id: 'different-module' } }, { status: 400, noStore: true });
 
   const narration = await request('narration', undefined, { method: 'GET', noStore: true });
-  equal(narration, { available: false, voice: 'Amanda Multilingual', voiceId: 'en-US-AmandaMultilingualNeural' }, 'Isolated server exposes voice identity without credentials');
+  equal(narration, {
+    available: false, voice: 'Amanda Multilingual', voiceId: 'en-US-AmandaMultilingualNeural',
+    reason: 'not-configured',
+    message: 'Amanda needs an Azure Speech key and matching region in the server settings. Choose a browser voice to listen now.',
+  }, 'Isolated server exposes voice identity and actionable setup guidance without credentials');
   await request('narration', { text: 'A synthetic narration check.' }, { status: 503, noStore: true });
   await request('narration', { text: 'A synthetic narration check.' }, { status: 403, origin: 'https://untrusted.example', noStore: true });
   console.log(`PASS ${assertions} enhancement HTTP assertions: detailed scenes, selectable fresh quizzes, historical reviews, passing guidance, and narration errors.`);

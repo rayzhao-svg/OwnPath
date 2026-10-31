@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { AI_CLIENT_TIMEOUT_MS } from "@/lib/ai-budget";
 import type { ResumeResult } from "@/lib/resume";
 import styles from "./resume-upload.module.css";
 
@@ -62,7 +63,7 @@ export function ResumeUpload({ disabled, onExtracted, onBusyChange }: ResumeUplo
     active.current = controller;
     setBusy(true);
     onBusyChange(true);
-    const timer = setTimeout(() => controller.abort(), 35000);
+    const timer = setTimeout(() => controller.abort(), AI_CLIENT_TIMEOUT_MS);
     try {
       let body: FormData | string;
       if (source === "file") {

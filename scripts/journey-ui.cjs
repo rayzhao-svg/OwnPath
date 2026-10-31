@@ -190,7 +190,7 @@ async function cloudNarrationJourney() {
   global.fetch = async (url, init) => {
     requests.push({ url, init });
     return init?.method === 'POST'
-      ? new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'audio/mpeg' } })
+      ? new Response(JSON.parse(init.body).text, { headers: { 'Content-Type': 'audio/mpeg' } })
       : Response.json({ available: true, voiceId: 'en-US-AmandaMultilingualNeural' });
   };
   const state = hooks(), pauseNarrationRef = { current: null }; let slideIndex = 0;
@@ -228,6 +228,37 @@ async function cloudNarrationJourney() {
   renderOffline(); await settle(); const offlineTree = renderOffline();
   check(button(offlineTree, 'Play narration').props.disabled && text(offlineTree).includes('waiting for setup'), 'Missing speech credentials are visible without silently using a browser voice');
   offline.unmount();
+
+  const installedAmanda = { name: 'Microsoft AmandaMultilingual Online (Natural)', voiceURI: 'amanda-browser', lang: 'en-US' };
+  const spoken = []; let browserPauses = 0;
+  global.SpeechSynthesisUtterance = class { constructor(value) { this.text = value; } };
+  window.SpeechSynthesisUtterance = global.SpeechSynthesisUtterance;
+  window.speechSynthesis = { getVoices: () => [installedAmanda], speak: utterance => spoken.push(utterance), cancel() {}, pause() { browserPauses++; }, resume() {}, addEventListener() {}, removeEventListener() {} };
+  const installed = hooks(), installedPause = { current: null };
+  const { LecturePlayer: InstalledPlayer } = load('components/lecture-player.tsx', componentOverrides(installed));
+  const renderInstalled = () => installed.render(() => InstalledPlayer({ lesson, slideIndex: 0, onSlideChange() {}, pauseNarrationRef: installedPause }));
+  renderInstalled(); await settle(); let installedTree = renderInstalled();
+  check(!button(installedTree, 'Play narration').props.disabled && text(installedTree).includes('browser’s installed voices'), 'An installed Amanda voice is playable and explicitly labeled when cloud setup is missing');
+  button(installedTree, 'Play narration').props.onClick(); installedTree = renderInstalled();
+  equal(spoken[0].voice, installedAmanda, 'The Amanda option uses only the actual Amanda Multilingual voice');
+  installedPause.current(); installedTree = renderInstalled();
+  check(browserPauses === 1 && button(installedTree, 'Resume narration'), 'Tutor interaction pauses installed Amanda through browser speech');
+  const staleInstalledEnd = spoken[0].onend;
+  global.fetch = async () => Response.json({ available: true, voiceId: 'en-US-AmandaMultilingualNeural' });
+  button(installedTree, 'Check connection').props.onClick(); await settle(); installedTree = renderInstalled();
+  check(button(installedTree, 'Play narration'), 'Reconnecting stops installed Amanda before switching to the verified cloud transport');
+  staleInstalledEnd();
+  equal(spoken.length, 1, 'A canceled installed voice cannot advance after reconnecting the cloud voice');
+  installed.unmount();
+
+  global.fetch = async () => Response.json({ available: false, voiceId: 'en-US-AmandaMultilingualNeural', reason: 'authentication', message: 'Amanda’s Speech credentials were rejected. Check the matching region.' });
+  delete window.speechSynthesis;
+  const rejected = hooks();
+  const { LecturePlayer: RejectedPlayer } = load('components/lecture-player.tsx', componentOverrides(rejected));
+  const renderRejected = () => rejected.render(() => RejectedPlayer({ lesson, slideIndex: 0, onSlideChange() {}, pauseNarrationRef: { current: null } }));
+  renderRejected(); await settle();
+  check(text(renderRejected()).includes('credentials were rejected'), 'A rejected connection explains the actual setup issue');
+  rejected.unmount();
 }
 
 const animationLesson = {
@@ -259,7 +290,7 @@ const animationLesson = {
 animationLesson.slides.forEach(slide => { slide.narration = slide.scenes.map(scene => scene.narration).join(' '); });
 const animationFrames = load('lib/teaching-scenes.ts').createTeachingFrames(animationLesson.slides);
 
-async function animationHarness(source) {
+async function animationHarness(source, playerProps = {}) {
   const spoken = [], audios = [], requests = [], preferences = new Map([['ownpath:narration-source:v1', source]]);
   const speechState = { paused: false, queued: [], started: [] };
   const counts = { pauses: 0, resumes: 0, cancellations: 0 };
@@ -298,13 +329,13 @@ async function animationHarness(source) {
   global.fetch = async (url, init) => {
     requests.push({ url, init });
     return init?.method === 'POST'
-      ? new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'audio/mpeg' } })
+      ? new Response(JSON.parse(init.body).text, { headers: { 'Content-Type': 'audio/mpeg' } })
       : Response.json({ available: true, voiceId: 'en-US-AmandaMultilingualNeural' });
   };
   const state = hooks(), pauseNarrationRef = { current: null };
   const { LecturePlayer } = load('components/lecture-player.tsx', componentOverrides(state));
   let tree;
-  const render = () => { tree = state.render(() => LecturePlayer({ lesson: activeLesson, slideIndex, onSlideChange: index => { slideIndex = index; }, pauseNarrationRef })); return tree; };
+  const render = () => { tree = state.render(() => LecturePlayer({ lesson: activeLesson, slideIndex, onSlideChange: index => { slideIndex = index; }, pauseNarrationRef, ...playerProps })); return tree; };
   const caption = () => text(find(find(tree, node => node.props?.className === 'teaching-caption'), node => node.type === 'p'));
   const visual = () => find(tree, node => node.props?.className?.startsWith('teaching-visual teaching-visual-'));
   const settle = async () => { await new Promise(setImmediate); render(); };
@@ -318,7 +349,7 @@ async function animationHarness(source) {
 }
 
 async function animatedNarrationJourney() {
-  equal(animationFrames.length, 4, 'Detailed teaching scenes yield separate spoken beats within the first slide');
+  equal(animationFrames.length, 6, 'Every visual line receives a spoken teaching beat');
   const native = await animationHarness('browser');
   equal(native.caption(), animationFrames[0].narration, 'The opening caption contains exactly the first spoken beat');
   check(text(native.visual()).includes('eligible = 10'), 'The first scene displays its concrete code example');
@@ -339,10 +370,13 @@ async function animatedNarrationJourney() {
   check(native.visual().props.className.includes('calculation'), 'Finishing a scene changes the stage from code to its calculation');
   equal(native.caption(), animationFrames[2].narration, 'The worked result appears with the matching spoken explanation');
   native.spoken[2].onend(); native.render();
+  equal(native.slideIndex, 0, 'A calculation explains its second visual line before advancing');
+  native.spoken[3].onend(); native.render();
   equal(native.slideIndex, 1, 'Finishing all explanations advances to the following slide');
   check(native.visual().props.className.includes('comparison'), 'The next slide displays its own comparison scene');
-  equal(native.caption(), native.spoken[3].text, 'A slide transition preserves speech and caption alignment');
-  native.spoken[3].onend(); native.render();
+  equal(native.caption(), native.spoken[4].text, 'A slide transition preserves speech and caption alignment');
+  native.spoken[4].onend(); native.render();
+  native.spoken[5].onend(); native.render();
   check(button(native.tree, 'Play narration') && text(native.tree).includes('reached the end'), 'The final teaching beat completes narration');
 
   button(native.tree, 'Previous').props.onClick(); native.render();
@@ -400,14 +434,14 @@ async function animatedNarrationJourney() {
     external.pauseNarrationRef.current(); external.render();
     check(button(external.tree, 'Resume narration'), `${source}: the source chapter is paused before a review link changes it`);
     external.setSlideIndex(1); await external.settle();
-    equal(external.caption(), animationFrames[3].narration, `${source}: external chapter navigation immediately displays the destination explanation`);
+    equal(external.caption(), animationFrames[4].narration, `${source}: external chapter navigation immediately displays the destination explanation`);
     check(button(external.tree, 'Play narration'), `${source}: an external chapter change clears the resumable source audio`);
     button(external.tree, 'Play narration').props.onClick(); await external.settle();
     const spokenText = source === 'browser' ? external.spoken.at(-1).text
-      : JSON.parse(external.requests.filter(request => request.init?.method === 'POST').at(-1).init.body).text;
-    equal(spokenText, animationFrames[3].narration, `${source}: Play starts the destination chapter instead of resuming the previous one`);
+      : await require('node:buffer').resolveObjectURL(external.audios.at(-1).src).text();
+    equal(spokenText, animationFrames[4].narration, `${source}: Play starts the destination chapter instead of resuming the previous one`);
     oldEnd(); await external.settle();
-    equal(external.caption(), animationFrames[3].narration, `${source}: a paused source chapter's stale callback cannot move the destination`);
+    equal(external.caption(), animationFrames[4].narration, `${source}: a paused source chapter's stale callback cannot move the destination`);
 
     const beforeUpdateEnd = source === 'browser' ? external.spoken.at(-1).onend : external.audios.at(-1).onended;
     const expandedNarration = 'Use a matching thirty-day observation window for both cohorts before comparing their retained shares.';
@@ -418,15 +452,16 @@ async function animatedNarrationJourney() {
         scenes: [{ title: 'Inspect the matching windows', narration: expandedNarration, visual: { kind: 'comparison', lines: ['Cohort A: matching 30-day window', 'Cohort B: matching 30-day window'] } }],
       } : slide),
     };
+    const updatedOpening = load('lib/teaching-scenes.ts').createTeachingFrames(updated.slides).find(frame => frame.slideIndex === 1).narration;
     external.updateLesson(updated); await external.settle();
-    equal(external.caption(), expandedNarration, `${source}: teaching updates under the same lesson ID replace the visible explanation`);
+    equal(external.caption(), updatedOpening, `${source}: teaching updates under the same lesson ID replace the visible explanation`);
     check(button(external.tree, 'Play narration'), `${source}: teaching updates stop the previous narration session`);
     beforeUpdateEnd(); await external.settle();
-    equal(external.caption(), expandedNarration, `${source}: old teaching audio cannot advance the updated lesson`);
+    equal(external.caption(), updatedOpening, `${source}: old teaching audio cannot advance the updated lesson`);
     button(external.tree, 'Play narration').props.onClick(); await external.settle();
     const updatedSpokenText = source === 'browser' ? external.spoken.at(-1).text
-      : JSON.parse(external.requests.filter(request => request.init?.method === 'POST').at(-1).init.body).text;
-    equal(updatedSpokenText, expandedNarration, `${source}: Play uses the updated teaching text rather than a stale cached sequence`);
+      : await require('node:buffer').resolveObjectURL(external.audios.at(-1).src).text();
+    equal(updatedSpokenText, updatedOpening, `${source}: Play uses the updated teaching text rather than a stale cached sequence`);
     external.unmount();
   }
 
@@ -449,6 +484,122 @@ async function animatedNarrationJourney() {
     equal(restarting.speechState.started.at(-1), restarting.spoken.at(-1), `${action}: the new utterance actually starts instead of waiting silently in the queue`);
     equal(restarting.speechState.started.at(-1).text, restarting.caption(), `${action}: restarted speech matches the visible explanation`);
     restarting.unmount();
+  }
+}
+
+async function sequentialHighlightingJourney() {
+  const { createTeachingFrames, narrationBeats } = load('lib/teaching-scenes.ts');
+  const scenes = [
+    { title: 'Three visual steps in one sentence', narration: 'Read the first input and then add the second input before checking the final result.', visual: { kind: 'calculation', lines: ['First input = 8', 'Second input = 2', 'Sum = 10'] } },
+    { title: 'Five visual steps in two beats', narration: animationLesson.slides[0].scenes[0].narration, visual: { kind: 'code', lines: ['eligible = 10', 'retained = 8', 'share = retained / eligible', 'percent = share * 100', 'assert percent == 80'] } },
+    { title: 'Authored line explanations', role: 'worked-example', lineNarrations: [
+      'Explain the first input and check its unit before moving to the next calculation. '.repeat(5).trim(),
+      'The second input counts two additional items in the same unit.',
+      'Adding the inputs gives ten items, which is the final result.',
+    ], visual: { kind: 'calculation', lines: ['First input = 8 items', 'Second input = 2 items', '8 + 2 = 10 items'] } },
+  ];
+  scenes[2].narration = scenes[2].lineNarrations.join(' ');
+  equal(narrationBeats(scenes[0].narration).length, 1, 'Regression fixture has one original narration beat for three visual lines');
+  equal(narrationBeats(scenes[1].narration).length, 2, 'Regression fixture has two original narration beats for five visual lines');
+  const highlightLesson = { ...lesson, id: 'highlight-regression', slides: [{ id: 'highlight-slide', title: 'Follow every calculation step', bullets: ['Read inputs before checking the result.'], scenes, narration: scenes.map(scene => scene.narration).join(' ') }] };
+  const frames = createTeachingFrames(highlightLesson.slides);
+  for (let sceneIndex = 0; sceneIndex < scenes.length; sceneIndex++) {
+    const sceneFrames = frames.filter(frame => frame.sceneIndex === sceneIndex);
+    equal([...new Set(sceneFrames.map(frame => frame.visualLineIndex))], scenes[sceneIndex].visual.lines.map((_, index) => index), `Scene ${sceneIndex + 1}: every visual line receives an ordered frame without a jump`);
+    equal(sceneFrames.map(frame => frame.narration).join(' '), scenes[sceneIndex].narration, `Scene ${sceneIndex + 1}: playback preserves every narration word exactly once`);
+    equal(sceneFrames[0].visualLineIndex, 0, `Scene ${sceneIndex + 1}: each part starts on its first line`);
+  }
+  check(frames.filter(frame => frame.sceneIndex === 2 && frame.visualLineIndex === 0).length > 1, 'Long authored explanations retain the same visual line across multiple audio clips');
+  for (const source of ['browser', 'amanda']) {
+    const player = await animationHarness(source);
+    player.updateLesson(highlightLesson); await player.settle();
+    const activeLine = () => {
+      const line = find(player.visual(), node => node.props?.['aria-current'] === 'step');
+      return Number(text(find(line, node => node.props?.className === 'teaching-line-number'))) - 1;
+    };
+    equal(activeLine(), 0, `${source}: a short scene initially highlights its first line`);
+    button(player.tree, 'Play narration').props.onClick(); await player.settle();
+    for (let index = 0; index < frames.length; index++) {
+      equal(activeLine(), frames[index].visualLineIndex, `${source}: frame ${index + 1} highlights its exact visual line`);
+      equal(player.caption(), frames[index].narration, `${source}: frame ${index + 1} displays its exact narration`);
+      const speaking = source === 'browser' ? player.spoken.at(-1).text
+        : await require('node:buffer').resolveObjectURL(player.audios.at(-1).src).text();
+      equal(speaking, player.caption(), `${source}: frame ${index + 1} speaks the visible caption`);
+      if (index === 1) {
+        player.pauseNarrationRef.current(); player.render();
+        equal(activeLine(), frames[index].visualLineIndex, `${source}: pausing preserves the highlighted line`);
+        button(player.tree, 'Resume narration').props.onClick(); await player.settle();
+        equal(activeLine(), frames[index].visualLineIndex, `${source}: resuming preserves the highlighted line`);
+      }
+      if (source === 'browser') player.spoken.at(-1).onend();
+      else player.audios.at(-1).onended();
+      await player.settle();
+    }
+    check(button(player.tree, 'Play narration'), `${source}: sequential line playback finishes normally`);
+    button(player.tree, 'Go to step 1: Three visual steps in one sentence').props.onClick(); player.render();
+    equal(activeLine(), 0, `${source}: manual part navigation resets to the first line`);
+    button(player.tree, 'Next explanation').props.onClick(); player.render();
+    equal(activeLine(), 1, `${source}: manual next explanation visits the second line`);
+    button(player.tree, 'Previous explanation').props.onClick(); player.render();
+    equal(activeLine(), 0, `${source}: manual previous explanation returns to the first line`);
+    const transcript = find(player.tree, node => node.props?.className === 'lecture-transcript');
+    equal(nodes(transcript).filter(node => node.type === 'p').length, 11, `${source}: the transcript presents separate paragraphs for every instructional line`);
+    player.unmount();
+  }
+}
+
+async function chapterPlaybackJourney() {
+  const { createTeachingFrames } = load('lib/teaching-scenes.ts');
+  const firstChapter = { ...animationLesson.slides[0], teachingVersion: 2, learningObjective: 'Calculate a retained share and verify its units.' };
+  const outline = { ...animationLesson.slides[1], scenes: undefined, narration: 'A short chapter overview.' };
+  const course = { ...animationLesson, teachingVersion: 2, slides: [firstChapter, outline] };
+  const chapterFrames = createTeachingFrames([firstChapter]);
+  for (const source of ['browser', 'amanda']) {
+    const player = await animationHarness(source);
+    player.updateLesson(course); await player.settle();
+    check(text(player.tree).includes(firstChapter.learningObjective), `${source}: the full chapter displays its learning objective`);
+    button(player.tree, 'Play narration').props.onClick(); await player.settle();
+    const activeAudio = player.audios.at(-1), activeUtterance = player.spoken.at(-1);
+    const beforeCancel = player.counts.cancellations;
+    const preparedNext = { ...animationLesson.slides[1], teachingVersion: 2 };
+    const reorderedFirst = {
+      teachingVersion: firstChapter.teachingVersion, learningObjective: firstChapter.learningObjective,
+      narration: firstChapter.narration,
+      scenes: firstChapter.scenes.map(scene => ({ visual: { lines: [...scene.visual.lines], kind: scene.visual.kind }, narration: scene.narration, title: scene.title })),
+      bullets: [...firstChapter.bullets], title: firstChapter.title, id: firstChapter.id,
+    };
+    player.updateLesson({ ...course, slides: [reorderedFirst, preparedNext] }); await player.settle();
+    check(button(player.tree, 'Pause narration'), `${source}: loading another chapter preserves active playback`);
+    equal(player.counts.cancellations, beforeCancel, `${source}: another chapter's details do not cancel the active speech session`);
+    if (source === 'browser') equal(player.spoken.at(-1), activeUtterance, `${source}: background chapter preparation preserves the exact utterance`);
+    else equal(player.audios.at(-1), activeAudio, `${source}: background chapter preparation preserves the exact audio element`);
+    for (let index = 0; index < chapterFrames.length; index++) {
+      equal(player.caption(), chapterFrames[index].narration, `${source}: chapter playback stays on its own teaching sequence`);
+      if (source === 'browser') player.spoken.at(-1).onend(); else player.audios.at(-1).onended();
+      await player.settle();
+    }
+    equal(player.slideIndex, 0, `${source}: chapter completion waits for explicit navigation`);
+    check(button(player.tree, 'Play narration') && text(player.tree).includes('Chapter complete.'), `${source}: chapter completion explains how to continue`);
+    const beforeNext = source === 'browser' ? player.spoken.length : player.audios.length;
+    player.updateLesson(course); await player.settle();
+    button(player.tree, 'Next').props.onClick(); await player.settle();
+    equal(player.slideIndex, 1, `${source}: Next selects the following chapter`);
+    check(button(player.tree, 'Play narration').props.disabled, `${source}: an outline cannot play as a full chapter`);
+    player.updateLesson({ ...course, slides: [firstChapter, preparedNext] }); await player.settle();
+    equal(source === 'browser' ? player.spoken.length : player.audios.length, beforeNext, `${source}: completed teaching does not autoplay after loading`);
+    check(!button(player.tree, 'Play narration').props.disabled, `${source}: loaded chapter teaching becomes playable`);
+    button(player.tree, 'Play narration').props.onClick(); await player.settle();
+    equal(player.caption(), createTeachingFrames([preparedNext])[0].narration, `${source}: Play starts the new chapter's first explanation`);
+    player.unmount();
+
+    const reviewedPlayer = await animationHarness(source, { requireDetailedChapter: true });
+    reviewedPlayer.updateLesson(course); await reviewedPlayer.settle();
+    check(button(reviewedPlayer.tree, 'Play narration').props.disabled, `${source}: an older unreviewed v2 AI chapter stays disabled during its quality upgrade`);
+    reviewedPlayer.updateLesson({ ...course, slides: [{ ...firstChapter, qualityVersion: 1 }, outline] }); await reviewedPlayer.settle();
+    check(!button(reviewedPlayer.tree, 'Play narration').props.disabled, `${source}: a quality-checked chapter becomes playable`);
+    button(reviewedPlayer.tree, 'Play narration').props.onClick(); await reviewedPlayer.settle();
+    check(button(reviewedPlayer.tree, 'Pause narration'), `${source}: the quality-checked chapter starts narration normally`);
+    reviewedPlayer.unmount();
   }
 }
 
@@ -533,7 +684,7 @@ async function networkFailures() {
 const originalFetch = global.fetch, originalWindow = global.window, originalDocument = global.document, originalUtterance = global.SpeechSynthesisUtterance, originalAudio = global.Audio;
 (async () => {
   try {
-    await narrationJourney(); await cloudNarrationJourney(); await animatedNarrationJourney(); await tutorJourney(); assessmentJourney(); await networkFailures();
+    await narrationJourney(); await cloudNarrationJourney(); await animatedNarrationJourney(); await sequentialHighlightingJourney(); await chapterPlaybackJourney(); await tutorJourney(); assessmentJourney(); await networkFailures();
     console.log(`PASS ${assertions} journey assertions: synchronized animated teaching, narration controls, tutor history, targeted review, assessment retries, and network failures.`);
     console.log('Speech and provider transport were stubbed; no live API calls were made.');
   } finally {
