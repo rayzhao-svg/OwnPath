@@ -106,12 +106,35 @@ async function stateJourney() {
   const { createMockReview, assertReviewResponse } = load('lib/remediation.ts');
   const { restoreForTest } = load('lib/learning-context.tsx');
   const { Quiz } = load('components/quiz.tsx');
-  const plan = createMockPlan(profile), lesson = (await generateLesson({ module: plan.modules[0] })).lesson;
+  const plan = createMockPlan(profile), originalLesson = (await generateLesson({ module: plan.modules[0] })).lesson;
+  let lesson = originalLesson;
   const state = [{ version: 1, profile, plan, lessons: { [lesson.moduleId]: lesson }, quizResults: {}, planGeneration: 'generation-one' }, true, null];
-  const current = provider(state), quizState = [];
+  const current = provider(state);
+  let quizState = [];
   let completed;
-  const props = { lesson, onComplete: result => { completed = result; current().recordQuizResult(result); } };
+  const props = {
+    lesson,
+    onComplete: result => { completed = result; current().recordQuizResult(result); },
+    async onRetry() {
+      const response = await load('app/api/quiz/route.ts').POST(new Request('http://localhost/api/quiz', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lesson, previousQuestions: lesson.quiz.map(question => question.question), questionCount: 5 }),
+      }));
+      equal(response.status, 200, 'Quiz setup generates fresh questions before assessment');
+      const generated = await response.json();
+      equal(generated.quiz.length, 5, 'Quiz setup generates the minimum five questions');
+      current().replaceQuiz(lesson.id, lesson.moduleId, generated.quiz, plan.id, 'generation-one');
+    },
+  };
   let quiz = render(Quiz, props, quizState);
+  equal(find(quiz, node => node.type === 'form').length, 0, 'Initial three-question lesson waits for quiz setup');
+  const generate = find(quiz, node => node.type === 'button' && node.props.onClick === props.onRetry)[0];
+  check(generate, 'Quiz setup offers a generation action');
+  await generate.props.onClick();
+  lesson = current().state.lessons[lesson.moduleId];
+  props.lesson = lesson;
+  quizState = []; // The parent remounts only after a successful question refresh.
+  quiz = render(Quiz, props, quizState);
   find(quiz, node => node.type === 'form')[0].props.onSubmit({ preventDefault() {} });
   quiz = render(Quiz, props, quizState);
   check(find(quiz, node => node.props?.role === 'alert').length, 'Incomplete quiz presents validation feedback');
@@ -122,7 +145,7 @@ async function stateJourney() {
     quiz = render(Quiz, props, quizState);
   }
   find(quiz, node => node.type === 'form')[0].props.onSubmit({ preventDefault() {} });
-  equal(completed.score, 33, 'Actual quiz handler derives failed score');
+  equal(completed.score, 20, 'Actual quiz handler derives one-of-five failed score');
   equal(completed.missedQuestionIds, lesson.quiz.slice(1).map(question => question.id), 'Actual quiz identifies only wrong answers');
   equal(current().state.plan.modules[1].status, 'locked', 'Failed quiz leaves prerequisite successor locked');
   const reviewed = await post({ lesson, result: completed });

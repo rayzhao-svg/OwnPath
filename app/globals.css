@@ -249,6 +249,34 @@ svg {
   align-items: center;
   justify-content: space-between;
 }
+.landing-brand {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.claude-credit {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: max-content;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+}
+.landing-brand .claude-credit {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+}
+.claude-credit img {
+  margin-left: 2px;
+}
+.claude-credit-name {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 14px;
+  letter-spacing: -0.3px;
+  color: #41413a;
+}
 .landing-header nav {
   display: flex;
   align-items: center;
@@ -780,8 +808,12 @@ svg {
   height: 100dvh;
   z-index: 10;
 }
-.app-sidebar > .brand {
-  margin: 0 10px 50px;
+.sidebar-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 10px 30px;
 }
 .workspace-label {
   font-size: 8px;
@@ -1471,69 +1503,6 @@ svg {
   font-size: 9px;
   line-height: 1.8;
 }
-.track-options {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin: 18px 0 20px;
-}
-.track-option {
-  position: relative;
-  border: 1px solid #e1e6d8;
-  border-radius: 7px;
-  background: #fff;
-  padding: 17px 12px;
-  cursor: pointer;
-}
-.track-option.selected {
-  background: #f0f5e6;
-  border-color: #afc293;
-}
-.track-option input {
-  position: absolute;
-  top: 12px;
-  right: 10px;
-  opacity: 0;
-  width: 17px;
-  height: 17px;
-}
-.track-option:focus-within {
-  outline: 2px solid #6c8653;
-  outline-offset: 3px;
-}
-.track-option > svg {
-  color: #8c9f76;
-  margin-bottom: 16px;
-}
-.track-option strong {
-  display: block;
-  font-size: 10px;
-  font-weight: 500;
-}
-.track-option small {
-  display: block;
-  font-size: 8px;
-  line-height: 1.7;
-  color: #9aa68b;
-  margin-top: 6px;
-}
-.track-check {
-  width: 13px;
-  height: 13px;
-  border: 1px solid #dce3d3;
-  background: #fff;
-  border-radius: 50%;
-  position: absolute;
-  right: 12px;
-  top: 15px;
-  display: grid;
-  place-items: center;
-  color: white;
-}
-.selected .track-check {
-  background: #809666;
-  border-color: #809666;
-}
 .field-label {
   display: block;
   color: #68775c;
@@ -2013,8 +1982,9 @@ svg {
     border-right: 0;
     border-bottom: 1px solid #e1e6d9;
   }
-  .app-sidebar > .brand {
+  .sidebar-brand {
     margin: 0 0 13px;
+    gap: 6px;
     align-self: flex-start;
   }
   .workspace-label,
@@ -2187,18 +2157,6 @@ svg {
   }
   .profile-form {
     margin-top: 28px;
-  }
-  .track-options {
-    gap: 7px;
-  }
-  .track-option {
-    padding: 15px 10px;
-  }
-  .track-option strong {
-    font-size: 9px;
-  }
-  .track-option small {
-    font-size: 7px;
   }
   .field-pair {
     grid-template-columns: 1fr;

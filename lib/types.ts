@@ -48,11 +48,22 @@ export interface StudyPlan {
   generatedAt: string;
 }
 
+export interface TeachingScene {
+  title: string;
+  narration: string;
+  visual: {
+    kind: "concept" | "code" | "calculation" | "comparison";
+    lines: string[];
+  };
+}
+
 export interface Slide {
   id: string;
   title: string;
   bullets: string[];
   narration: string;
+  /** Ordered teaching moments, each tied to its own narration and visual. */
+  scenes?: TeachingScene[];
 }
 
 export interface QuizQuestion {
@@ -83,6 +94,8 @@ export interface QuizResult {
   /** Optional for compatibility with results saved before adaptive learning. */
   answers?: Record<string, number>;
   missedQuestionIds?: string[];
+  /** The exact question set scored for this attempt, retained across retakes. */
+  questions?: QuizQuestion[];
 }
 
 export interface QuizMistake {
@@ -136,9 +149,33 @@ export interface PlanResponse {
 export interface LessonRequest {
   module: Module;
 }
+export interface LessonDetailRequest {
+  lesson: Lesson;
+  module: Module;
+}
 export interface LessonResponse {
   lesson: Lesson;
   mode: "mock" | "claude";
+}
+export interface QuizRefreshRequest {
+  lesson: Lesson;
+  previousQuestions: string[];
+  /** Omitted requests use five questions. Supported counts are 5 through 10. */
+  questionCount?: number;
+}
+export interface QuizRefreshResponse {
+  lessonId: Lesson["id"];
+  moduleId: Lesson["moduleId"];
+  quiz: QuizQuestion[];
+  mode: "mock" | "claude";
+}
+export interface NarrationStatus {
+  available: boolean;
+  voice: "Amanda Multilingual";
+  voiceId: "en-US-AmandaMultilingualNeural";
+}
+export interface NarrationRequest {
+  text: string;
 }
 export interface ChatRequest {
   lesson: Lesson;

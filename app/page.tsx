@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Brand } from "@/components/brand";
+import { ClaudeCredit } from "@/components/claude-credit";
 import { Icon } from "@/components/icon";
 
 function PathPreview() {
@@ -107,7 +108,10 @@ export default function LandingPage() {
   return (
     <div className="landing">
       <header className="landing-header page-container">
-        <Brand />
+        <div className="landing-brand">
+          <Brand />
+          <ClaudeCredit />
+        </div>
         <nav aria-label="Main navigation">
           <a href="#how-it-works">How it works</a>
           <a href="#your-toolkit">Your toolkit</a>
@@ -248,7 +252,7 @@ export default function LandingPage() {
               {
                 icon: "headphones" as const,
                 title: "Lessons you can listen to",
-                body: "Follow clear slides with optional narration from your browser’s own voice.",
+                body: "Listen to each lesson with natural narration, or follow the transcript at your own pace.",
               },
               {
                 icon: "chat" as const,

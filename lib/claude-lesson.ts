@@ -27,7 +27,7 @@ export async function requestClaudeJson({
   const key = process.env.ANTHROPIC_API_KEY?.trim();
   if (!key || key === "YOUR_API_KEY_HERE") return null;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.min(timeoutMs, 24_000));
+  const timer = setTimeout(() => controller.abort(), Math.min(timeoutMs, 45_000));
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",

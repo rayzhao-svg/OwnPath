@@ -13,13 +13,22 @@ function invalid(message: string): never {
   throw new ApiFailure("VALIDATION_ERROR", message);
 }
 
+/** Use an attempt's saved questions while keeping the original teaching slides. */
+export function lessonForAttempt(lesson: Lesson, result: QuizResult): Lesson {
+  assertQuizResult(result);
+  const quiz = result.questions ?? lesson.quiz;
+  if (result.lessonId !== lesson.id || result.moduleId !== lesson.moduleId || result.totalQuestions !== quiz.length)
+    invalid("The quiz result must belong to this lesson.");
+  return result.questions ? { ...lesson, quiz } : lesson;
+}
+
 /** Legacy results are still valid progress, but cannot identify missing answers. */
 export function assertAttemptForLesson(
   lesson: Lesson,
   result: QuizResult,
   requireAnswers = false,
 ): void {
-  assertQuizResult(result);
+  lesson = lessonForAttempt(lesson, result);
   if (
     result.lessonId !== lesson.id || result.moduleId !== lesson.moduleId ||
     result.totalQuestions !== lesson.quiz.length
@@ -80,6 +89,7 @@ const GENERIC_TITLE = /^(?:the big picture|see it in practice|a common pitfall|m
 
 /** Associate each actual mistake with the closest supplied teaching context. */
 export function diagnoseMistakes(lesson: Lesson, result: QuizResult): QuizMistake[] {
+  lesson = lessonForAttempt(lesson, result);
   if (!result.answers) return [];
   const answers = result.answers;
   return lesson.quiz.filter((question) =>
@@ -112,6 +122,7 @@ export function diagnoseMistakes(lesson: Lesson, result: QuizResult): QuizMistak
 
 /** No random IDs or timestamps: the same lesson and attempt give the same review. */
 export function createMockReview({ lesson, result }: ReviewRequest): ReviewResponse {
+  lesson = lessonForAttempt(lesson, result);
   assertAttemptForLesson(lesson, result, true);
   const mistakes = diagnoseMistakes(lesson, result);
   if (!mistakes.length) invalid("A targeted review needs at least one missed question.");
@@ -162,6 +173,7 @@ export function assertReviewResponse(
   lesson: Lesson,
   result: QuizResult,
 ): asserts value is ReviewResponse {
+  lesson = lessonForAttempt(lesson, result);
   assertAttemptForLesson(lesson, result, true);
   const response = object(value, "reviewResponse");
   if (response.mode !== "mock" && response.mode !== "claude") invalid("Invalid review mode.");

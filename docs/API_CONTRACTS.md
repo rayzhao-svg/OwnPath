@@ -10,6 +10,8 @@ All endpoints accept JSON POST requests and return JSON. Success responses have 
 | ------------------ | -------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | `POST /api/plan`   | `PlanRequest` → `{ profile: LearnerProfile }`                                    | `PlanResponse` → `{ plan: StudyPlan, mode: "mock" \| "claude" }` | Generate a personalized curriculum with Claude when configured; otherwise preserve the fixed mock catalog. |
 | `POST /api/lesson` | `LessonRequest` → `{ module: Module }`                                           | `LessonResponse` → `{ lesson: Lesson, mode: "mock" \| "claude" }` | Generate a lecture and quiz for the supplied module; use canonical catalog lessons in mock mode. |
+| `POST /api/lesson/detail` | `LessonDetailRequest` → `{ lesson, module }` | `LessonResponse` → `{ lesson, mode }` | Expand the lesson into guided teaching scenes while preserving identities and quiz. |
+| `POST /api/quiz` | `QuizRefreshRequest` → `{ lesson, previousQuestions, questionCount? }` | `QuizRefreshResponse` → `{ lessonId, moduleId, quiz, mode }` | Generate 5–10 fresh lesson-based questions; defaults to five. |
 | `POST /api/chat`   | `ChatRequest` → `{ lesson: Lesson, question: string, messages: TutorMessage[] }` | `ChatResponse` → `{ message: TutorMessage, mode: "mock" \| "claude" }` | Answer with lecture, active-slide, and bounded conversation context; retain the deterministic mock fallback. |
 
 ### Create a plan
@@ -84,6 +86,30 @@ Pass `{ lesson, question, messages: [] }` using a complete lesson from `/api/les
 The current-slide context uses an optional hidden prefix in `question`: `[OwnPath slide: <slideId>]\n<user question>`. The server resolves that ID against `lesson.slides`, rejects unknown IDs, and strips the prefix before teaching. Plain questions remain supported. No extra `ChatRequest` field is required. The UI displays only the learner's question, and keeps the prefix in API history so earlier turns retain their slide context after navigation.
 
 Claude receives the supplied slides, resolved current slide, current question, and up to **20 prior messages** within a **12,000-character** history budget. The client also bounds the UTF-8 request body below **60 KiB**, evicting oldest turns when needed. Tutor answers are bounded to **3,500 characters**, **1,400 output tokens**, and a **20-second** deadline. The UI pauses narration on tutor interaction and allows explicit resume; slide navigation stops narration. Conversation history stays in the mounted lesson interface and resets on reload. The deterministic mock tutor remains available without a configured key and does not provide live conversational reasoning.
+
+### Detailed teaching scenes
+
+`POST /api/lesson/detail` accepts the current lesson and matching module. It adds 3–5 ordered scenes per slide, with an explanation, a worked example or comparison, intermediate values, and a useful visual. `TeachingScene` contains `{ title, narration, visual: { kind, lines } }`; visual kinds are `concept`, `code`, `calculation`, and `comparison`. `Slide.scenes` is optional for compatibility. When present, `slide.narration` equals the scene narrations joined with spaces. The endpoint preserves lesson ID, slide IDs/order/titles/bullets, and the full quiz. It accepts up to eight slides and uses a 45-second provider deadline. Output is bounded to fit subsequent tutor and historical-review requests.
+
+The browser requests missing scenes once per lesson visit, with a manual retry after failure. `updateLessonTeaching` merges teaching into the current lesson while preserving concurrent quiz changes, all attempts, reviews, and progress. Late requests cannot update another lesson or plan. Unconfigured mode faithfully splits existing narration and reports `mock`; configured failures remain retryable.
+
+`createTeachingFrames` splits scene narration into short sentence beats without breaking decimals or dotted identifiers. Each audio clip uses exactly its visible caption text. Playback advances the frame and visual together, then advances slides at the chapter boundary. The next clip is prefetched during playback; prefetching does not advance the visible explanation. Manual navigation, source changes, and teaching updates cancel obsolete playback.
+
+### Fresh quiz questions
+
+`POST /api/quiz` accepts `QuizRefreshRequest`: `{ lesson, previousQuestions, questionCount? }`, where `questionCount` is an integer from 5 to 10 (default 5) and `previousQuestions` contains up to 60 earlier question stems (at most 2,000 characters each). It returns `QuizRefreshResponse`: `{ lessonId, moduleId, quiz, mode }`. The quiz contains exactly the requested number of new questions with fresh IDs, four distinct options each, an answer index, and an explanation. Questions must be grounded in the supplied slides and must not match current or excluded question stems after normalization. Quiz generation has a 45-second provider deadline and a 55-second client deadline. The client bounds the request below 60 KiB by trimming older exclusions while retaining the current quiz in the lesson. Responses reserve space beneath the shared 64 KiB request limit for subsequent attempt snapshots and reviews. No-store responses and normal body/error limits apply. Configured Claude generation failures are retryable; unconfigured mode uses a finite lesson-based bank and reports exhaustion instead of recycling the same questions.
+
+The assessment selector offers 5–10 questions and defaults to five for older saved quizzes. Changing the selection preserves current answers until the learner generates a replacement. Older three-question sets remain available to historical reviews but cannot be submitted as a new assessment. The passing threshold remains 70%.
+
+New `QuizResult` records include a `questions` snapshot. Historical scoring and targeted reviews use that snapshot rather than the latest active quiz. `replaceQuiz` preserves best/latest results, history, saved reviews, and completed modules while migrating compatible legacy attempts to snapshots. New submissions referring to a superseded question set are rejected. Existing records without snapshots remain compatible.
+
+### Amanda narration
+
+`GET /api/narration` returns `NarrationStatus`: `{ available, voice: "Amanda Multilingual", voiceId: "en-US-AmandaMultilingualNeural" }`. Availability means server credentials are configured; it is not a live provider verification. Credentials are never returned.
+
+`POST /api/narration` accepts `NarrationRequest`: `{ "text": "Current slide narration" }`, with 1–5,000 characters and the shared 64 KiB body limit. It returns MP3 bytes with `Content-Type: audio/mpeg`. Only same-origin JSON requests are accepted. The server fixes the voice to Amanda, escapes untrusted text as SSML, and uses `AZURE_SPEECH_KEY` plus its matching `AZURE_SPEECH_REGION`. Responses use `Cache-Control: no-store`. A bounded, ten-minute server memory cache reduces repeat synthesis; audio is not saved to disk.
+
+Failures use the existing JSON error envelope: 400 invalid text/JSON, 403 cross-origin requests, 413 oversized body, 415 unsupported content type, 429 provider throttling, 499 canceled request, 502 synthesis failure, 503 missing configuration, or 504 timeout. Provider details and credentials are withheld. The 20-second synthesis deadline includes reading the audio response. Run `npm run test:narration` and `npm run test:journey` for offline route, audio lifecycle, and component checks; these do not verify live Azure access.
 
 ## Domain relationships
 

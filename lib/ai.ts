@@ -102,7 +102,8 @@ function contextualAnswer({ lesson, question }: ChatRequest): string {
     return `Let's make “${lesson.title}” concrete. ${slide.bullets.join(" ")} Try describing the next step in your own words. This is a scripted mock response grounded in this lesson.`;
   }
   if (/quiz|test|assessment|pass|score/.test(query)) {
-    return `The knowledge check reviews ${lesson.title.toLowerCase()} with ${lesson.quiz.length} questions. Choose an answer for every question, then submit. A score of at least 70% completes the module; with three questions you need all three correct. You can review explanations and retry. Answers and scoring are local and visible in this Phase 1 mock.`;
+    const requiredCorrect = Math.ceil(lesson.quiz.length * 0.7);
+    return `The knowledge check reviews ${lesson.title.toLowerCase()} with ${lesson.quiz.length} questions. Choose an answer for every question, then submit. A score of at least 70% completes the module; you need at least ${requiredCorrect} of ${lesson.quiz.length} correct. You can review explanations and retry. Answers and scoring are local and visible in this mock.`;
   }
   if (/pitfall|mistake|wrong|confus|misconception/.test(query)) {
     const slide =

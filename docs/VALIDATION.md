@@ -1,4 +1,25 @@
-# Phase 3 learning experience validation
+# Learning experience validation
+
+## Working-copy verification — 2026-10-31
+
+The final working copy passes zero-warning lint, TypeScript checks, the production Webpack build, and whitespace checks. The offline suites passed **1,869 assertions**:
+
+| Suite | Assertions |
+| --- | ---: |
+| Integration / Phase 4 / resume | 182 / 143 / 420 |
+| Quiz generation / history / UI / parent | 234 / 68 / 66 / 53 |
+| Detailed lesson / teaching-state integration | 162 / 83 |
+| Animated-player and interaction journeys | 135 |
+| Narration route / audio engine / voice choice | 123 / 64 / 14 |
+| Resources / goal-based direction | 95 / 27 |
+
+An isolated production server on port 3004 used placeholder process credentials, leaving the configured development server and its credentials unchanged. `test:smoke`, `test:phase4:smoke`, and `test:smoke:enhancements` passed **832**, **174**, and **166** HTTP assertions respectively. These cover all three tracks and eighteen catalog lessons, resume-to-review journeys, detailed scenes, five- and ten-question fresh quizzes, historical reviews after quiz replacement, passing-score guidance, invalid requests, and unconfigured Amanda errors. These mock HTTP results do not claim live provider success.
+
+A browser walkthrough on a separate localhost origin created a synthetic web-development profile, loaded a lesson, generated and passed a five-question quiz, generated ten fresh questions, and reloaded. The best score stayed at 100%, the completed module stayed complete, and its successor unlocked. The lesson showed four resources and shared Claude branding. At 390 × 844, document width equaled viewport width with no horizontal overflow; the viewport override was reset. The temporary browser tab and test server were closed after verification.
+
+The configured live development lesson was also verified during implementation: Claude expanded the SQL lesson into detailed teaching scenes, and Amanda automatically advanced the matching captions and visuals from an order-count query to a repeat-rate calculation. Pause/resume held the caption in place. Earlier live checks confirmed consecutive fresh Claude quizzes and saved-score persistence.
+
+Final verification fixed browser speech remaining globally paused after stop or navigation, removed obsolete three-question passing guidance, and updated older integration flows to generate at least five questions before grading. Lesson expansion and quiz generation are serialized, and combined payload limits are checked before state updates; rejected updates retain current answers, history, and progress. Credentials and generated build files remain ignored.
 
 ## Repository provenance
 

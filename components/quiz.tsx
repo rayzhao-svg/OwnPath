@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { diagnoseMistakes } from "@/lib/remediation";
+import { DEFAULT_QUIZ_QUESTION_COUNT, isQuizQuestionCount, QUIZ_QUESTION_COUNTS } from "@/lib/quiz-refresh";
 import type { Lesson, QuizQuestion, QuizResult } from "@/lib/types";
 
 export function Quiz({
@@ -13,6 +14,12 @@ export function Quiz({
   onComplete,
   onReview,
   onReviewWeakAreas,
+  onRetry,
+  questionCount = isQuizQuestionCount(lesson.quiz.length) ? lesson.quiz.length : DEFAULT_QUIZ_QUESTION_COUNT,
+  onQuestionCountChange,
+  retryBusy = false,
+  generationBlocked = false,
+  retryError = "",
   reviewDisabled = false,
   reviewBusy = false,
 }: {
@@ -22,19 +29,30 @@ export function Quiz({
   onComplete: (result: QuizResult) => void;
   onReview?: (question: string) => void;
   onReviewWeakAreas?: (result: QuizResult) => void;
+  onRetry?: () => void;
+  questionCount?: number;
+  onQuestionCountChange?: (count: number) => void;
+  retryBusy?: boolean;
+  generationBlocked?: boolean;
+  retryError?: string;
   reviewDisabled?: boolean;
   reviewBusy?: boolean;
 }) {
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [result, setResult] = useState<QuizResult | null>(null);
   const [error, setError] = useState("");
+  const quizReady = isQuizQuestionCount(lesson.quiz.length);
   const allAnswered = lesson.quiz.every(
     (question) => answers[question.id] !== undefined,
   );
   const diagnosticCandidate = result ?? latestResult;
+  const matchesCurrentQuestions = !diagnosticCandidate?.questions || (
+    diagnosticCandidate.questions.length === lesson.quiz.length &&
+    diagnosticCandidate.questions.every((question, index) => question.id === lesson.quiz[index].id)
+  );
   const diagnosticResult = diagnosticCandidate?.lessonId === lesson.id &&
     diagnosticCandidate.moduleId === lesson.moduleId &&
-    diagnosticCandidate.totalQuestions === lesson.quiz.length
+    diagnosticCandidate.totalQuestions === lesson.quiz.length && matchesCurrentQuestions
     ? diagnosticCandidate : undefined;
   const mistakes = diagnosticResult
     ? diagnoseMistakes(lesson, diagnosticResult)
@@ -52,6 +70,7 @@ export function Quiz({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (retryBusy || result || !quizReady) return;
     if (!allAnswered) {
       setError(
         "Choose one answer for each question before checking your understanding.",
@@ -74,6 +93,7 @@ export function Quiz({
       missedQuestionIds: lesson.quiz
         .filter((question) => answers[question.id] !== question.correctAnswer)
         .map((question) => question.id),
+      questions: lesson.quiz.map((question) => ({ ...question, options: [...question.options] })),
     };
     setResult(nextResult);
     setError("");
@@ -91,8 +111,8 @@ export function Quiz({
           <span className="eyebrow">A MOMENT TO REFLECT</span>
           <h2 id="knowledge-check-title">Let’s make it stick.</h2>
           <p className="muted">
-            {lesson.quiz.length} questions · 70% to complete this module ·
-            Retake anytime
+            {quizReady ? `${lesson.quiz.length} questions` : "Choose 5–10 questions"} · 70% to complete this module ·
+            New questions on each retry
           </p>
         </div>
         <span className="quiz-heading-icon">
@@ -104,9 +124,34 @@ export function Quiz({
           <Icon name={previousResult.passed ? "check" : "book"} size={17} />
           {previousResult.passed
             ? `You’ve already passed this module with ${previousResult.score}%. You can practice again below.`
-            : `Your saved score is ${previousResult.score}%. Review your weak areas, then try the questions again below.`}
+            : `Your saved score is ${previousResult.score}%. Review your weak areas, then try a fresh set of questions.`}
         </p>
       )}
+      <div className="quiz-settings">
+        <label htmlFor="quiz-question-count">
+          Number of questions
+          <select
+            id="quiz-question-count"
+            value={questionCount}
+            disabled={retryBusy || !onQuestionCountChange}
+            onChange={(event) => {
+              const count = Number(event.target.value);
+              if (isQuizQuestionCount(count)) onQuestionCountChange?.(count);
+            }}
+          >
+            {QUIZ_QUESTION_COUNTS.map((count) => <option key={count} value={count}>{count} questions</option>)}
+          </select>
+        </label>
+        {!result && onRetry && (
+          <button type="button" className="button button-secondary button-small" onClick={onRetry} disabled={retryBusy || generationBlocked} aria-busy={retryBusy}>
+            <Icon name="refresh" size={15} /> Generate {questionCount} questions
+          </button>
+        )}
+      </div>
+      {generationBlocked && <p className="quiz-previous" role="status">Preparing lesson details… New questions will be available when they finish. You can still answer the current questions.</p>}
+      {!quizReady && <p className="quiz-setup-copy muted">Choose how many questions you’d like, then generate your quiz from this lesson.</p>}
+      {retryBusy && <p className="quiz-previous" role="status">Writing new questions from this lesson…</p>}
+      {retryError && <p className="tutor-error" role="alert">{retryError}</p>}
       {!result && diagnosticResult && !diagnosticResult.passed && (
         <p className="quiz-previous quiz-previous-review">
           <Icon name="book" size={17} />
@@ -116,12 +161,12 @@ export function Quiz({
             : " Take the quiz again to identify specific gaps; earlier attempts did not record individual answers."}
         </p>
       )}
-      <form onSubmit={submit}>
+      {quizReady && <form onSubmit={submit}>
         {lesson.quiz.map((question, questionIndex) => (
           <fieldset
             key={question.id}
             className="quiz-question"
-            disabled={!!result}
+            disabled={!!result || retryBusy}
           >
             <legend>
               <span>{String(questionIndex + 1).padStart(2, "0")}</span>
@@ -186,6 +231,7 @@ export function Quiz({
                 type="button"
                 className="button button-primary button-small"
                 aria-busy={reviewBusy}
+                disabled={retryBusy}
                 onClick={() => onReviewWeakAreas(diagnosticResult)}
               >
                 Review weak areas <Icon name="book" size={15} />
@@ -222,7 +268,7 @@ export function Quiz({
             <span>
               {Object.keys(answers).length} of {lesson.quiz.length} answered
             </span>
-            <button className="button button-primary" type="submit">
+            <button className="button button-primary" type="submit" disabled={retryBusy}>
               Check my understanding <Icon name="arrow-right" size={17} />
             </button>
           </div>
@@ -256,11 +302,9 @@ export function Quiz({
                 <button
                   type="button"
                   className="button button-secondary"
-                  onClick={() => {
-                    setResult(null);
-                    setAnswers({});
-                    setError("");
-                  }}
+                  onClick={onRetry}
+                  disabled={retryBusy || generationBlocked || !onRetry}
+                  aria-busy={retryBusy}
                 >
                   <Icon name="refresh" size={16} /> Practice again
                 </button>
@@ -273,7 +317,7 @@ export function Quiz({
             </div>
           </div>
         )}
-      </form>
+      </form>}
     </section>
   );
 }

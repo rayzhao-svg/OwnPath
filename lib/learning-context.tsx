@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { createMockPlan, DEMO_PROFILE } from "@/lib/mock-data";
+import { assertLessonRequestBudget } from "@/lib/lesson-budget";
 import { assertAttemptForLesson, assertReviewResponse } from "@/lib/remediation";
 import {
   assertLesson,
@@ -21,6 +22,7 @@ import type {
   Lesson,
   LessonResponse,
   PlanResponse,
+  QuizQuestion,
   QuizResult,
   ReviewResponse,
   SavedRemediation,
@@ -46,6 +48,8 @@ interface LearningContextValue {
   storageWarning: string | null;
   setPlan: (profile: LearnerProfile, plan: StudyPlan, mode?: PlanResponse["mode"]) => void;
   saveLesson: (lesson: Lesson, mode?: LessonResponse["mode"], expectedPlanId?: string, expectedPlanGeneration?: string) => void;
+  updateLessonTeaching: (lesson: Lesson, mode?: LessonResponse["mode"], expectedPlanId?: string, expectedPlanGeneration?: string) => void;
+  replaceQuiz: (lessonId: string, moduleId: string, questions: QuizQuestion[], expectedPlanId?: string, expectedPlanGeneration?: string) => void;
   startModule: (moduleId: string, expectedPlanId?: string, expectedPlanGeneration?: string) => void;
   recordQuizResult: (result: QuizResult, expectedPlanId?: string, expectedPlanGeneration?: string) => void;
   saveRemediation: (response: ReviewResponse, expectedPlanId?: string, expectedPlanGeneration?: string, expectedResult?: QuizResult) => void;
@@ -100,6 +104,30 @@ function attemptKey(result: QuizResult): string {
   return JSON.stringify([result.lessonId, result.completedAt, result.score, answers]);
 }
 
+function copyQuestions(questions: QuizQuestion[]): QuizQuestion[] {
+  return questions.map((question) => ({ ...question, options: [...question.options] }));
+}
+
+function sameQuestions(left: QuizQuestion[], right: QuizQuestion[]): boolean {
+  return left.length === right.length && left.every((question, index) => {
+    const other = right[index];
+    return question.id === other.id && question.question === other.question &&
+      question.correctAnswer === other.correctAnswer && question.explanation === other.explanation &&
+      question.options.length === other.options.length && question.options.every((option, optionIndex) => option === other.options[optionIndex]);
+  });
+}
+
+function snapshotAttempt(result: QuizResult, lesson: Lesson): QuizResult {
+  if (result.questions || result.lessonId !== lesson.id) return result;
+  try {
+    assertAttemptForLesson(lesson, result);
+    return { ...result, questions: copyQuestions(lesson.quiz) };
+  } catch {
+    // Historical scores from a replaced lesson remain progress, not current diagnostics.
+    return result;
+  }
+}
+
 function restoreState(raw: string): LearningState | null {
   const value: unknown = JSON.parse(raw);
   if (
@@ -132,17 +160,29 @@ function restoreState(raw: string): LearningState | null {
   const hasLatestResults = isRecord(value.latestQuizResults);
   function savedAttempt(id: string, cached: unknown, current = false): QuizResult | null {
     try {
-      assertQuizResult(cached);
-      if (!byId.has(id) || cached.moduleId !== id) return null;
+      let result: QuizResult;
+      try {
+        assertQuizResult(cached);
+        result = cached;
+      } catch {
+        if (current || !isRecord(cached) || cached.questions === undefined) return null;
+        // A damaged optional question snapshot cannot erase a valid historical
+        // grade. Keep only its independently validated score, without diagnostics.
+        const scoreOnly = Object.fromEntries(Object.entries(cached)
+          .filter(([key]) => !["questions", "answers", "missedQuestionIds"].includes(key)));
+        assertQuizResult(scoreOnly);
+        result = scoreOnly;
+      }
+      if (!byId.has(id) || result.moduleId !== id) return null;
       const lesson = lessons[id];
       // Historical best results survive a regenerated lesson; current diagnostics
       // must still agree with the actual questions and answers.
       if (current) {
         if (!lesson) return null;
-        assertAttemptForLesson(lesson, cached);
-      } else if (!hasLatestResults && lesson?.id === cached.lessonId && lesson.quiz.length === cached.totalQuestions)
-        assertAttemptForLesson(lesson, cached);
-      return cached;
+        assertAttemptForLesson(lesson, result);
+      } else if (!hasLatestResults && lesson?.id === result.lessonId && lesson.quiz.length === result.totalQuestions)
+        assertAttemptForLesson(lesson, result);
+      return result;
     } catch { return null; }
   }
   for (const [id, cached] of Object.entries(value.quizResults)) {
@@ -292,6 +332,40 @@ export function LearningProvider({ children }: { children: React.ReactNode }) {
       };
     });
   }, []);
+  const updateLessonTeaching = useCallback((lesson: Lesson, mode?: LessonResponse["mode"], expectedPlanId?: string, expectedPlanGeneration?: string) => {
+    try { assertLesson(lesson); }
+    catch { return; }
+    setState((previous) => {
+      if (!previous.plan || (expectedPlanId && previous.plan.id !== expectedPlanId) ||
+          (expectedPlanGeneration && previous.planGeneration !== expectedPlanGeneration)) return previous;
+      const target = previous.plan.modules.find((item) => item.id === lesson.moduleId);
+      const current = previous.lessons[lesson.moduleId];
+      if (!target || target.status === "locked" || !current || current.id !== lesson.id ||
+          current.title !== lesson.title || target.title !== lesson.title ||
+          current.slides.length !== lesson.slides.length ||
+          current.slides.some((slide, index) => slide.id !== lesson.slides[index].id ||
+            slide.title !== lesson.slides[index].title ||
+            JSON.stringify(slide.bullets) !== JSON.stringify(lesson.slides[index].bullets))) return previous;
+      const slides = lesson.slides.map((slide) => ({
+        id: slide.id,
+        title: slide.title,
+        narration: slide.narration,
+        bullets: [...slide.bullets],
+        ...(slide.scenes ? { scenes: slide.scenes.map((scene) => ({
+          ...scene, visual: { ...scene.visual, lines: [...scene.visual.lines] },
+        })) } : {}),
+      }));
+      const updated = { ...current, slides };
+      try { assertLessonRequestBudget(updated); }
+      catch { return previous; }
+      if (JSON.stringify(current.slides) === JSON.stringify(slides)) return previous;
+      return {
+        ...previous,
+        lessons: { ...previous.lessons, [lesson.moduleId]: updated },
+        ...(knownMode(mode) ? { lessonModes: { ...previous.lessonModes, [lesson.moduleId]: mode } } : {}),
+      };
+    });
+  }, []);
   const startModule = useCallback((moduleId: string, expectedPlanId?: string, expectedPlanGeneration?: string) => {
     setState((previous) => {
       if (!previous.plan) return previous;
@@ -311,6 +385,38 @@ export function LearningProvider({ children }: { children: React.ReactNode }) {
       };
     });
   }, []);
+  const replaceQuiz = useCallback((lessonId: string, moduleId: string, questions: QuizQuestion[], expectedPlanId?: string, expectedPlanGeneration?: string) => {
+    setState((previous) => {
+      if (!previous.plan || (expectedPlanId && previous.plan.id !== expectedPlanId) ||
+          (expectedPlanGeneration && previous.planGeneration !== expectedPlanGeneration)) return previous;
+      const target = previous.plan.modules.find((item) => item.id === moduleId);
+      const lesson = previous.lessons[moduleId];
+      if (!target || target.status === "locked" || !lesson || lesson.id !== lessonId ||
+          !target.prerequisites.every((id) => previous.plan!.modules.some((item) => item.id === id && item.status === "completed"))) return previous;
+      let replacement: Lesson;
+      try {
+        replacement = { ...lesson, quiz: copyQuestions(questions) };
+        assertLesson(replacement);
+        assertLessonRequestBudget(replacement);
+      }
+      catch { return previous; }
+      if (sameQuestions(lesson.quiz, questions)) return previous;
+      const best = previous.quizResults[moduleId];
+      const latest = previous.latestQuizResults?.[moduleId];
+      const history = previous.quizHistory?.[moduleId];
+      return {
+        ...previous,
+        lessons: { ...previous.lessons, [moduleId]: replacement },
+        quizResults: { ...previous.quizResults, ...(best ? { [moduleId]: snapshotAttempt(best, lesson) } : {}) },
+        ...(previous.latestQuizResults ? {
+          latestQuizResults: { ...previous.latestQuizResults, ...(latest ? { [moduleId]: snapshotAttempt(latest, lesson) } : {}) },
+        } : {}),
+        ...(previous.quizHistory ? {
+          quizHistory: { ...previous.quizHistory, ...(history ? { [moduleId]: history.map((result) => snapshotAttempt(result, lesson)) } : {}) },
+        } : {}),
+      };
+    });
+  }, []);
   const recordQuizResult = useCallback((result: QuizResult, expectedPlanId?: string, expectedPlanGeneration?: string) => {
     assertQuizResult(result);
     setState((previous) => {
@@ -321,6 +427,7 @@ export function LearningProvider({ children }: { children: React.ReactNode }) {
       if (!target || target.status === "locked") return previous;
       const currentLesson = previous.lessons[result.moduleId];
       if (!currentLesson) return previous;
+      if (result.questions && !sameQuestions(result.questions, currentLesson.quiz)) return previous;
       try { assertAttemptForLesson(currentLesson, result); }
       catch { return previous; }
       if (!target.prerequisites.every((id) => previous.plan!.modules.some((item) => item.id === id && item.status === "completed"))) return previous;
@@ -400,6 +507,8 @@ export function LearningProvider({ children }: { children: React.ReactNode }) {
         storageWarning,
         setPlan,
         saveLesson,
+        updateLessonTeaching,
+        replaceQuiz,
         startModule,
         recordQuizResult,
         saveRemediation,

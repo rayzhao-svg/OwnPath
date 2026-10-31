@@ -10,6 +10,7 @@ import type {
   QuizQuestion,
   QuizResult,
   Slide,
+  TeachingScene,
   StudyPlan,
   TutorMessage,
 } from "@/lib/types";
@@ -188,12 +189,31 @@ export function assertStudyPlan(value: unknown): asserts value is StudyPlan {
   modules.forEach((item) => visit(item.id));
 }
 
+export function assertTeachingScene(value: unknown, path = "scene"): asserts value is TeachingScene {
+  record(value, path);
+  if (Object.keys(value).length !== 3 || !["title", "narration", "visual"].every((key) => Object.hasOwn(value, key)))
+    fail(`${path} must contain only title, narration, and visual.`);
+  textValue(value.title, `${path}.title`, 80);
+  textValue(value.narration, `${path}.narration`, 700);
+  record(value.visual, `${path}.visual`);
+  if (Object.keys(value.visual).length !== 2 || !Object.hasOwn(value.visual, "kind") || !Object.hasOwn(value.visual, "lines"))
+    fail(`${path}.visual must contain only kind and lines.`);
+  enumValue(value.visual.kind, ["concept", "code", "calculation", "comparison"], `${path}.visual.kind`);
+  textList(value.visual.lines, `${path}.visual.lines`, 5, 250, 1);
+}
+
 function assertSlide(value: unknown, path: string): asserts value is Slide {
   record(value, path);
   textValue(value.id, `${path}.id`, 100);
   textValue(value.title, `${path}.title`, 200);
   textList(value.bullets, `${path}.bullets`, 10, 2000, 1);
   textValue(value.narration, `${path}.narration`, 5000);
+  if (value.scenes !== undefined) {
+    list(value.scenes, `${path}.scenes`, 10, 1);
+    value.scenes.forEach((scene, index) => assertTeachingScene(scene, `${path}.scenes[${index}]`));
+    if ((value.scenes as TeachingScene[]).map((scene) => scene.narration).join(" ") !== value.narration)
+      fail(`${path}.narration must match the ordered teaching scenes.`);
+  }
 }
 function assertQuestion(
   value: unknown,
@@ -316,5 +336,22 @@ export function assertQuizResult(value: unknown): asserts value is QuizResult {
     ) fail("Missed question IDs must be unique and match the incorrect answer count.");
     if (value.answers && value.missedQuestionIds.some((id) => !Object.hasOwn(value.answers as object, id)))
       fail("Missed question IDs must belong to the answered questions.");
+  }
+  if (value.questions !== undefined) {
+    list(value.questions, "quizResult.questions", 20, 1);
+    value.questions.forEach((question, index) => assertQuestion(question, `quizResult.questions[${index}]`));
+    const questions = value.questions as QuizQuestion[];
+    if (questions.length !== value.totalQuestions || new Set(questions.map((question) => question.id)).size !== questions.length)
+      fail("Quiz question snapshots must contain exactly the scored questions with unique IDs.");
+    if (value.answers !== undefined) {
+      const answers = value.answers as Record<string, number>;
+      if (questions.some((question) => !Object.hasOwn(answers, question.id) || answers[question.id] >= question.options.length))
+        fail("Quiz answers must match the saved question snapshot.");
+      const missed = questions.filter((question) => answers[question.id] !== question.correctAnswer);
+      if (questions.length - missed.length !== value.correctAnswers)
+        fail("Quiz question snapshots must agree with the recorded score.");
+      if (value.missedQuestionIds && missed.some((question) => !(value.missedQuestionIds as string[]).includes(question.id)))
+        fail("Missed questions must agree with the saved question snapshot.");
+    }
   }
 }
