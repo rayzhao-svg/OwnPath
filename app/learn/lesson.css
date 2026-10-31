@@ -233,7 +233,18 @@
 }
 .teaching-visual-line > :last-child {
   min-width: 0;
+  white-space: pre-line;
 }
+
+.course-chapters { padding: 22px; margin-bottom: 22px; }
+.course-chapters-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; color: var(--text-muted, #687265); font-size: 12px; margin-bottom: 14px; }
+.course-chapters ol { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 6px 18px; }
+.course-chapters button { width: 100%; display: flex; align-items: baseline; gap: 10px; padding: 11px 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: inherit; text-align: left; font-size: 13px; line-height: 1.5; cursor: pointer; }
+.course-chapters button > :first-child { color: #819074; font-size: 11px; font-variant-numeric: tabular-nums; }
+.course-chapters button[aria-current="step"] { border-color: #b9c9aa; background: #eef2e8; color: #30472d; }
+.course-chapters button:hover { background: #f0f3eb; }
+.course-chapters button svg { flex-shrink: 0; margin-left: auto; }
+.teaching-objective { margin: 0 0 24px; padding: 14px 16px; border-left: 2px solid #abc58d; background: #ffffff08; color: #d9e6d2; font-size: 14px; line-height: 1.75; }
 .teaching-visual-line.is-active {
   background: #49673f;
   color: #f6ffeb;

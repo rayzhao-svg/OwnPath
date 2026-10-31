@@ -50,7 +50,9 @@ const oldKey = process.env.AZURE_SPEECH_KEY, oldRegion = process.env.AZURE_SPEEC
     global.fetch = async () => { throw new Error('Unexpected transport'); };
     let status = await route.GET();
     equal(status.status, 200, 'Status can be read without a resource');
-    equal(await status.json(), { available: false, voice: 'Amanda Multilingual', voiceId: 'en-US-AmandaMultilingualNeural' }, 'Status exposes only availability and voice identity');
+    const missingStatus = await status.json();
+    equal({ available: missingStatus.available, voice: missingStatus.voice, voiceId: missingStatus.voiceId, reason: missingStatus.reason }, { available: false, voice: 'Amanda Multilingual', voiceId: 'en-US-AmandaMultilingualNeural', reason: 'not-configured' }, 'Status identifies missing configuration without exposing secrets');
+    check(missingStatus.message.includes('Azure Speech key and matching region'), 'Missing setup includes actionable guidance');
     equal(status.headers.get('cache-control'), 'no-store', 'Status is not cached');
     await failure(await post({ text: 'Read this slide.' }), 503, 'Missing credentials');
     await failure(await post({ text: 'Loopback slide.' }, { headers: { Host: '127.0.0.1:3002', Origin: 'http://127.0.0.1:3002' } }), 503, 'Normalized NextURL accepts the actual loopback origin');
@@ -58,12 +60,39 @@ const oldKey = process.env.AZURE_SPEECH_KEY, oldRegion = process.env.AZURE_SPEEC
     await failure(await post({ text: 'Host check.' }, { headers: { Host: 'localhost/path' } }), 403, 'Malformed host is rejected');
 
     process.env.AZURE_SPEECH_KEY = 'YOUR_API_KEY_HERE'; process.env.AZURE_SPEECH_REGION = 'eastus';
-    equal(library.getNarrationStatus().available, false, 'A placeholder key does not advertise availability');
+    equal((await library.getNarrationStatus()).available, false, 'A placeholder key does not advertise availability');
     process.env.AZURE_SPEECH_KEY = 'fake-speech-resource-key';
     process.env.AZURE_SPEECH_REGION = 'eastus.invalid/path';
-    equal(library.getNarrationStatus().available, false, 'An invalid region cannot build a provider hostname');
+    equal((await library.getNarrationStatus()).available, false, 'An invalid region cannot build a provider hostname');
     process.env.AZURE_SPEECH_REGION = 'eastus';
-    equal(library.getNarrationStatus().available, true, 'A configured resource advertises availability');
+    let statusCalls = 0;
+    global.fetch = async (endpoint, init) => {
+      statusCalls++;
+      equal(endpoint, 'https://eastus.tts.speech.microsoft.com/cognitiveservices/voices/list', 'Status verifies the regional Azure voice catalog');
+      equal(init.headers['Ocp-Apim-Subscription-Key'], 'fake-speech-resource-key', 'Connection verification keeps credentials server-side');
+      return Response.json([{ ShortName: 'en-US-AmandaMultilingualNeural' }]);
+    };
+    const verified = await Promise.all([route.GET(), route.GET()]);
+    equal((await verified[0].json()).available, true, 'Only a verified resource with Amanda advertises availability');
+    equal((await verified[1].json()).available, true, 'Concurrent status checks share the verification');
+    await route.GET();
+    equal(statusCalls, 1, 'Repeated checks use a short-lived verification cache');
+    process.env.AZURE_SPEECH_KEY = 'rejected-speech-key';
+    global.fetch = async () => new Response('private-provider-detail', { status: 401 });
+    let disconnected = await (await route.GET()).json();
+    equal(disconnected.reason, 'authentication', 'Rejected credentials do not show a connected voice');
+    check(!JSON.stringify(disconnected).includes('private-provider-detail') && !JSON.stringify(disconnected).includes('rejected-speech-key'), 'Verification errors withhold credentials and provider details');
+    process.env.AZURE_SPEECH_KEY = 'unsupported-region-key';
+    global.fetch = async () => Response.json([{ ShortName: 'en-US-JennyNeural' }]);
+    disconnected = await (await route.GET()).json();
+    equal(disconnected.reason, 'voice-unavailable', 'A region without Amanda is distinguished from missing setup');
+    process.env.AZURE_SPEECH_KEY = 'network-failure-key';
+    global.fetch = async () => { throw new Error('private-provider-detail'); };
+    equal((await (await route.GET()).json()).reason, 'service-unavailable', 'Network failures do not advertise availability');
+    process.env.AZURE_SPEECH_KEY = 'oversized-catalog-key';
+    global.fetch = async () => new Response('x', { headers: { 'Content-Length': String(2 * 1024 * 1024 + 1) } });
+    equal((await (await route.GET()).json()).reason, 'service-unavailable', 'Oversized voice catalogs are rejected');
+    process.env.AZURE_SPEECH_KEY = 'fake-speech-resource-key';
 
     for (const body of [{}, null, [], { text: '' }, { text: '  ' }, { text: '\u0000\u0001' }, { text: 4 }, { text: 'x'.repeat(5001) }, { text: 'x', voice: 'other' }]) {
       await failure(await post(body), 400, 'Invalid narration');

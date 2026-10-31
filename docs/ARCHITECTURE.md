@@ -1,5 +1,14 @@
 # Architecture
 
+
+## Accounts and path libraries
+
+The root wraps the UI in `AccountProvider` and `LearningWorkspaceProvider`. Authentication hydrates before private path data is exposed. The workspace selects one path-local `LearningProvider`, retaining the original lesson/quiz/progress API while persisting multiple independent states. Guest libraries use `ownpath:library:v2` with a one-time legacy migration; authenticated path state stays on the server. Per-account local storage remembers only the selected path identifier.
+
+Account APIs use native SQLite, salted versioned scrypt hashes, hashed opaque sessions, ownership-filtered queries, same-origin writes, expected-account headers, and revision-based compare-and-swap. The sync controller serializes debounced writes and flushes before switching or signing out. Path and identity epochs prevent stale requests from mutating a newly selected path or account. Render-level identity gating prevents old-account data appearing during account changes. See [the full account contract](ACCOUNTS.md).
+
+The earlier browser-only architecture below describes the original prototype; account-backed persistence supersedes those persistence/deployment limitations for signed-in learners.
+
 OwnPath Phase 3A integrates the Phase 2A curriculum engine and Phase 2B lecture/tutor system in a Next.js App Router application with a small server API surface and browser-owned learning state. TypeScript strict mode is enabled. Tailwind CSS and shared styles provide a responsive cream-and-olive interface. Runtime dependencies are limited to Next.js, React, and React DOM.
 
 ## Application flow

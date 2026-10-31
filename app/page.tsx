@@ -118,6 +118,7 @@ export default function LandingPage() {
           <Link href="/dashboard" className="landing-nav-link">
             My learning <Icon name="arrow-right" size={15} />
           </Link>
+          <Link href="/account" className="landing-nav-link">Sign in</Link>
         </nav>
       </header>
       <main id="main-content">

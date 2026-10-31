@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { AI_CLIENT_TIMEOUT_MS } from "@/lib/ai-budget";
 import type { ResumeResult } from "@/lib/resume";
 import styles from "./resume-upload.module.css";
 
@@ -62,7 +63,7 @@ export function ResumeUpload({ disabled, onExtracted, onBusyChange }: ResumeUplo
     active.current = controller;
     setBusy(true);
     onBusyChange(true);
-    const timer = setTimeout(() => controller.abort(), 35000);
+    const timer = setTimeout(() => controller.abort(), AI_CLIENT_TIMEOUT_MS);
     try {
       let body: FormData | string;
       if (source === "file") {
@@ -121,7 +122,7 @@ export function ResumeUpload({ disabled, onExtracted, onBusyChange }: ResumeUplo
     <section className={styles.panel} aria-labelledby="resume-heading" aria-busy={busy}>
       <h2 id="resume-heading">Start with your resume <span>(optional)</span></h2>
       <p>Upload a PDF or TXT file, up to 2 MB, to fill in your education, experience, and skills. You can edit everything below.</p>
-      <p className={styles.privacy}>Files are processed in memory and never stored. Selectable text only; scanned PDFs need a TXT version or pasted text. Your reviewed profile is saved in this browser when you create a path.</p>
+      <p className={styles.privacy}>Files are processed in memory and never stored. Selectable text only; scanned PDFs need a TXT version or pasted text. Only your reviewed profile is saved with your learning path.</p>
       <label className={styles.check}>
         <input type="checkbox" checked={useClaude} disabled={busy || disabled} onChange={(event) => setUseClaude(event.target.checked)} />
         <span>Use Claude, when available, to organize my resume</span>

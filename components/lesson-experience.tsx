@@ -7,27 +7,18 @@ import { Icon } from "@/components/icon";
 import { LectureChat } from "@/components/lecture-chat";
 import { LecturePlayer } from "@/components/lecture-player";
 import { Quiz } from "@/components/quiz";
-import { requestLessonDetailResponse, requestLessonResponse, requestQuizRefreshResponse } from "@/lib/api-client";
+import { requestChapterDetailResponse, requestLessonResponse, requestQuizRefreshResponse, requestReviewResponse } from "@/lib/api-client";
 import { useLearning } from "@/lib/learning-context";
 import { DEFAULT_QUIZ_QUESTION_COUNT, isQuizQuestionCount } from "@/lib/quiz-refresh";
 import { resourcesForLesson } from "@/lib/lesson-resources";
 import { assertLessonRequestBudget } from "@/lib/lesson-budget";
-import { assertAttemptForLesson, assertReviewResponse, createMockReview, diagnoseMistakes, lessonForAttempt } from "@/lib/remediation";
+import { assertAttemptForLesson, createMockReview, diagnoseMistakes, lessonForAttempt } from "@/lib/remediation";
 import type { Lesson, LessonResponse, QuizResult, ReviewResponse } from "@/lib/types";
 import "@/app/learn/lesson.css";
 
 async function requestReview(lesson: Lesson, result: QuizResult): Promise<ReviewResponse> {
   try {
-    const response = await fetch("/api/review", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lesson, result }),
-      signal: AbortSignal.timeout(27_000),
-    });
-    if (!response.ok) throw new Error("Review unavailable");
-    const review: unknown = await response.json();
-    assertReviewResponse(review, lesson, result);
-    return review;
+    return await requestReviewResponse(lesson, result);
   } catch {
     // A connection failure must not prevent focused practice or erase progress.
     return { ...createMockReview({ lesson, result }), fallbackReason: "generation-failed" };
@@ -67,10 +58,14 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
   const questionCount = quizSettings.key === lessonKey ? quizSettings.count
     : lesson && isQuizQuestionCount(lesson.quiz.length) ? lesson.quiz.length : DEFAULT_QUIZ_QUESTION_COUNT;
   const slideIndex = slidePosition.key === lessonKey ? slidePosition.index : 0;
+  const activeChapter = lesson?.slides[slideIndex];
+  const chapterKey = `${lessonKey}:${activeChapter?.id}`;
+  const visibleChapter = useRef(activeChapter?.id);
+  useEffect(() => { visibleChapter.current = activeChapter?.id; }, [activeChapter?.id]);
   const error = loadError?.key === requestKey ? loadError.message : "";
-  const detailBusy = detailStatus.key === lessonKey && detailStatus.busy;
-  const detailError = detailStatus.key === lessonKey ? detailStatus.error : "";
-  const needsDetail = !!lesson && lesson.slides.some((slide) => !slide.scenes?.length);
+  const detailBusy = detailStatus.key === chapterKey && detailStatus.busy;
+  const detailError = detailStatus.key === chapterKey ? detailStatus.error : "";
+  const needsDetail = !!activeChapter && lessonMode !== "mock" && (activeChapter.teachingVersion !== 2 || activeChapter.qualityVersion !== 1);
   const latestCandidate = state.latestQuizResults
     ? state.latestQuizResults[moduleId] : state.quizResults[moduleId];
   let latestResult: QuizResult | undefined;
@@ -102,44 +97,60 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
     detailRequest.current = null;
   }, [lessonKey]);
 
-  const expandLesson = useCallback(async () => {
-    if (!lesson || !currentModule || currentModule.status === "locked" || detailRequest.current || quizRequest.current) return;
-    const ticket = { controller: new AbortController(), key: lessonKey };
+  const expandLesson = useCallback(async (slideId = activeChapter?.id) => {
+    if (!lesson || !slideId || !currentModule || currentModule.status === "locked" || quizRequest.current) return;
+    const key = `${lessonKey}:${slideId}`;
+    if (detailRequest.current) {
+      if (detailRequest.current.key === key) return;
+      attemptedDetails.current.delete(detailRequest.current.key);
+      detailRequest.current.controller.abort();
+    }
+    const ticket = { controller: new AbortController(), key };
     detailRequest.current = ticket;
-    attemptedDetails.current.add(lessonKey);
-    setDetailStatus({ key: lessonKey, busy: true, error: "" });
+    attemptedDetails.current.add(key);
+    setDetailStatus({ key, busy: true, error: "" });
     try {
-      const response = await requestLessonDetailResponse(lesson, currentModule, ticket.controller.signal);
+      const response = await requestChapterDetailResponse(lesson, currentModule, slideId, ticket.controller.signal);
       if (ticket.controller.signal.aborted || detailRequest.current !== ticket) return;
       const current = latestLesson.current;
       if (!current || current.id !== lesson.id) return;
-      assertLessonRequestBudget({ ...current, slides: response.lesson.slides });
-      pauseNarration();
-      updateLessonTeaching(response.lesson, response.mode, state.plan?.id, state.planGeneration);
-      setDetailStatus({ key: lessonKey, busy: false, error: "" });
+      const updated = { ...current, slides: current.slides.map((slide) => slide.id === slideId ? response.slide : slide) };
+      assertLessonRequestBudget(updated);
+      if (visibleChapter.current === slideId) pauseNarration();
+      updateLessonTeaching(updated, response.mode, state.plan?.id, state.planGeneration);
+      setDetailStatus({ key, busy: false, error: "" });
     } catch (cause) {
       if (ticket.controller.signal.aborted || detailRequest.current !== ticket) return;
-      setDetailStatus({ key: lessonKey, busy: false, error: cause instanceof Error
-        ? cause.message : "The expanded explanation could not load. You can continue with the saved lesson." });
+      setDetailStatus({ key, busy: false, error: cause instanceof Error
+        ? cause.message : "The full chapter could not load. Your saved lesson is still available." });
     } finally {
       if (detailRequest.current === ticket) detailRequest.current = null;
     }
-  }, [lesson, currentModule, lessonKey, pauseNarration, updateLessonTeaching, state.plan, state.planGeneration]);
+  }, [lesson, currentModule, activeChapter?.id, lessonKey, pauseNarration, updateLessonTeaching, state.plan, state.planGeneration]);
 
   useEffect(() => {
-    if (!ready || !needsDetail || !currentModule || currentModule.status === "locked" || quizBusy ||
-        attemptedDetails.current.has(lessonKey)) return;
+    if (!ready || !lesson || !activeChapter || lessonMode === "mock" || !currentModule || currentModule.status === "locked" || quizBusy) return;
+    // Prepare the current chapter first, then just one chapter ahead. Longer
+    // courses never require one giant generation or an upload of cached text.
+    const next = lesson.slides[slideIndex + 1];
+    const target = needsDetail ? activeChapter : next && (next.teachingVersion !== 2 || next.qualityVersion !== 1) ? next : undefined;
+    if (!target || attemptedDetails.current.has(`${lessonKey}:${target.id}`)) return;
     let active = true;
     // Strict Mode's first effect is cleaned up before starting a provider call.
-    queueMicrotask(() => { if (active) void expandLesson(); });
+    queueMicrotask(() => { if (active) void expandLesson(target.id); });
     return () => { active = false; };
-  }, [ready, needsDetail, currentModule, lessonKey, expandLesson, quizBusy]);
+  }, [ready, lesson, lessonMode, activeChapter, slideIndex, needsDetail, currentModule, lessonKey, expandLesson, quizBusy]);
 
   const refreshQuestions = useCallback(async (reviewAttempt?: string) => {
     if (!lesson || quizRequest.current) return;
     if (detailRequest.current) {
-      setQuizRefresh({ key: lessonKey, busy: false, error: "Wait for lesson details to finish, then generate your new questions." });
-      return;
+      // A requested quiz takes priority over the optional background expansion.
+      // Resume expansion from the latest saved quiz once this request settles.
+      const interrupted = detailRequest.current;
+      detailRequest.current = null;
+      attemptedDetails.current.delete(interrupted.key);
+      interrupted.controller.abort();
+      setDetailStatus({ key: lessonKey, busy: false, error: "" });
     }
     const ticket = { controller: new AbortController(), key: lessonKey };
     quizRequest.current = ticket;
@@ -340,18 +351,30 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
               </div>
             ) : (
               <>
-                {detailBusy && <p className="lecture-notice" role="status">Preparing a more detailed lesson… You can keep learning while it loads.</p>}
+                <nav className="course-chapters card" aria-label="Course chapters">
+                  <div className="course-chapters-heading"><span className="eyebrow">YOUR COURSE</span><span>{lesson.slides.length} chapters</span></div>
+                  <ol>{lesson.slides.map((chapter, index) => <li key={chapter.id}>
+                    <button type="button" aria-current={index === slideIndex ? "step" : undefined} onClick={() => {
+                      pauseNarration();
+                      setSlidePosition({ key: lessonKey, index });
+                    }}><span>{String(index + 1).padStart(2, "0")}</span><span>{chapter.title}</span></button>
+                  </li>)}</ol>
+                </nav>
+                {detailBusy && <p className="lecture-notice" role="status">Preparing this chapter’s explanations, worked examples, and practice…</p>}
                 {detailError && (
                   <div className="tutor-error" role="alert">
                     <p>{detailError}</p>
                     <button type="button" disabled={quizBusy || detailBusy} onClick={() => { void expandLesson(); }}>Retry expanded explanation</button>
                   </div>
                 )}
+                {needsDetail && !detailBusy && !detailError && <p className="lecture-notice">This is the chapter overview. <button type="button" className="narration-reconnect" disabled={quizBusy} onClick={() => { void expandLesson(); }}>Load full chapter</button></p>}
                 <div className="lesson-main-grid">
                   <LecturePlayer
                     key={`player-${lessonKey}`}
                     lesson={lesson}
                     slideIndex={slideIndex}
+                    chapterLoading={detailBusy}
+                    requireDetailedChapter={lessonMode === "claude"}
                     onSlideChange={(index) => setSlidePosition({ key: lessonKey, index })}
                     pauseNarrationRef={pauseNarrationRef}
                   />
@@ -406,11 +429,11 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
                           </ul>
                         </div>
                         <div className="quiz-result-actions">
-                          <button className="button button-primary" type="button" disabled={quizBusy || (needsFreshQuiz && detailBusy)} aria-busy={quizBusy} onClick={() => {
+                          <button className="button button-primary" type="button" disabled={quizBusy} aria-busy={quizBusy} onClick={() => {
                             if (needsFreshQuiz) void refreshQuestions(savedReview.review.attemptedAt);
                             else document.getElementById("knowledge-check")?.scrollIntoView({ behavior: "smooth", block: "start" });
                           }}>
-                            {quizBusy ? "Writing new questions…" : needsFreshQuiz && detailBusy ? "Preparing lesson details…" : needsFreshQuiz ? "I’ve reviewed — try new questions" : "Return to the knowledge check"}
+                            {quizBusy ? "Writing new questions…" : needsFreshQuiz ? "I’ve reviewed — try new questions" : "Return to the knowledge check"}
                             <Icon name="arrow-right" size={16} />
                           </button>
                         </div>
@@ -434,7 +457,6 @@ export function LessonExperience({ moduleId }: { moduleId: string }) {
                       if (isQuizQuestionCount(count)) setQuizSettings({ key: lessonKey, count });
                     }}
                     retryBusy={quizBusy}
-                    generationBlocked={detailBusy}
                     retryError={quizError}
                     reviewBusy={reviewBusy}
                     onReviewWeakAreas={(result) => {
