@@ -14,6 +14,8 @@
     "test:requests": "node scripts/api-client.cjs && node scripts/ai-requests.cjs",
     "test:context": "node scripts/lesson-context.cjs",
     "test:course": "node scripts/course-lessons.cjs && node scripts/lesson-context.cjs",
+    "test:accounts": "node scripts/accounts.cjs && node scripts/account-client.cjs && node scripts/account-ui.cjs && node scripts/learning-library.cjs && node scripts/track-switcher-ui.cjs && node scripts/learning-workspace.cjs",
+    "test:accounts:http": "node scripts/accounts-http.cjs",
     "test:journey": "node scripts/journey-ui.cjs",
     "test:quiz": "node scripts/quiz-refresh.cjs && node scripts/quiz-history.cjs && node scripts/quiz-ui.cjs",
     "test:resources": "node scripts/lesson-resources.cjs",

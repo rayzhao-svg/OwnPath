@@ -22,11 +22,12 @@ function Duration({ minutes }: { minutes: number }) {
 }
 
 export function CurriculumView() {
-  const { state, ready, loadDemo } = useLearning();
+  const { state, ready, loadDemo, accountUser } = useLearning();
   const router = useRouter();
   const [filter, setFilter] = useState<"all" | "remaining" | "completed">(
     "all",
   );
+  const [openError, setOpenError] = useState<string | null>(null);
   const [resources, setResources] = useState<string | null>(null);
   if (!ready)
     return (
@@ -88,13 +89,18 @@ export function CurriculumView() {
     1,
     Math.ceil(totalMinutes / (plan.weeklyStudyHours * 60)),
   );
-  function openModule(module: Module, anchor?: string) {
-    if (demo) loadDemo();
-    router.push(`/learn/${module.id}${anchor ? `#${anchor}` : ""}`);
+  async function openModule(module: Module, anchor?: string) {
+    try {
+      if (demo) await loadDemo();
+      router.push(`/learn/${module.id}${anchor ? `#${anchor}` : ""}`);
+    } catch (error) {
+      setOpenError(error instanceof Error ? error.message : "Your sample path could not be saved. Please try again.");
+    }
   }
 
   return (
     <div className="dashboard-view">
+      {openError && <p className="form-error" role="alert">{openError}</p>}
       <div className="dashboard-greeting">
         <div>
           <span className="eyebrow">
@@ -429,7 +435,7 @@ export function CurriculumView() {
             <Icon name="sparkles" size={16} />
             <p>
               Follow your lessons, ask questions, and check your understanding.
-              Your path and progress stay in this browser.
+              {accountUser ? "Your paths and progress are saved to your account." : "Guest progress stays in this browser. Sign in to save all your learning tracks to an account."}
             </p>
           </div>
         </aside>

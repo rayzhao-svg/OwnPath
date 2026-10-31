@@ -1,5 +1,9 @@
 # API contracts
 
+## Account and multi-path persistence
+
+Authentication and saved path endpoints are documented in [ACCOUNTS.md](ACCOUNTS.md). Signed-in learners persist independent version-1 learning states per opaque path record, including multiple paths in the same track category. The workspace preserves the existing active-learning API while syncing full state with owner checks and revision-based saves. Guest libraries use a version-2 envelope and import only after an explicit user action. AI request contracts below remain unchanged.
+
 [`lib/types.ts`](../lib/types.ts) is the single source of truth for all domain objects and request/response schemas. Consumers import its interfaces instead of declaring parallel types. Pure runtime assertions and request parsers live in [`lib/validators.ts`](../lib/validators.ts), which can also validate restored browser state. [`lib/validation.ts`](../lib/validation.ts) adds bounded JSON reading and HTTP error responses for route handlers.
 
 All endpoints accept JSON POST requests and return JSON. Success responses have HTTP status `200` and `mode: "mock" | "claude"`. Phase 3A integrates the Phase 2A curriculum engine and Phase 2B lecture/tutor adapters: all three endpoints use Claude when the server key is configured and retain their existing mock behavior otherwise. The endpoints are stateless: the browser supplies the relevant profile, module, or lesson context on each request.

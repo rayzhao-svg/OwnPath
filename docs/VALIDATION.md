@@ -1,5 +1,15 @@
 # Learning experience validation
 
+## Accounts and multiple saved tracks — 2026-10-31
+
+Implemented persistent email/password accounts, hashed opaque sessions, a SQLite path library, independent path switching, debounced revision-based progress saves, and explicit guest-library imports. Existing single-path browser state migrates into the guest library without deleting its original backup. New paths retain earlier curricula and all associated teaching, assessments, attempts, reviews, and completed modules.
+
+The focused account command passes **480 assertions**: 242 native SQLite/authentication/ownership/quota assertions, 76 account client/session/sync assertions, 23 account form assertions, 43 guest migration assertions, 26 track-switcher assertions, and 70 actual workspace integration assertions. The separate real HTTP journey passes **170 assertions**, using two synthetic accounts, independent cookie jars, three paths including two in the same category, completed five-question assessments, reauthentication, cross-account rejection, stale revisions, and retry-safe imports. Test storage uses a disposable database and does not change real account data.
+
+A browser walkthrough on isolated port 3006 registered a synthetic account, saved a data science path, completed a five-question quiz with 100%, and saved a web development path. Full reload and sign-out/sign-in restored both paths with independent completion counts (data science 1/6, web development 0/6). Switching back retained the 100% score and unlocked successor. The UI visibly removed private path data at sign-out. No AI or speech provider was called by these mock account journeys.
+
+Zero-warning ESLint, TypeScript, production build, and whitespace validation pass. Existing learning, quiz, resume, and adaptive-progress integration suites also pass. Account storage is local to the configured persistent SQLite path on the Node host; it is excluded from Git and requires durable writable storage when deployed. See [account runtime and API details](ACCOUNTS.md).
+
 ## Course depth and narration alignment — 2026-10-31
 
 Replaced proportional line highlighting with explicit per-line narration and a visual-line index on each runtime audio frame. Short explanations now visit intermediate lines; longer explanations retain their line across several clips. New AI chapters stop at chapter boundaries, and one-chapter background preparation does not interrupt active audio. The player waits for a completed content consistency review before playing a new AI chapter. Legacy and mock narration remain compatible.

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { LearningProvider } from "@/lib/learning-context";
+import { AccountProvider } from "@/lib/account-context";
+import { LearningWorkspaceProvider } from "@/lib/learning-workspace";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -20,7 +21,7 @@ export default function RootLayout({
         <a className="skip-link" href="#main-content">
           Skip to content
         </a>
-        <LearningProvider>{children}</LearningProvider>
+        <AccountProvider><LearningWorkspaceProvider>{children}</LearningWorkspaceProvider></AccountProvider>
       </body>
     </html>
   );

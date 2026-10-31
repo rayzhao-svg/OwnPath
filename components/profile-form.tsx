@@ -63,6 +63,7 @@ function ProfileFields() {
     }
     const fields = new FormData(event.currentTarget);
     const goals = String(fields.get("goals") || "").trim();
+    const selectedTrack = String(fields.get("track") || "auto");
     const profile: LearnerProfile = {
       id: state.profile?.id || crypto.randomUUID(),
       name: String(fields.get("name") || "").trim(),
@@ -74,7 +75,8 @@ function ProfileFields() {
         .filter(Boolean),
       goals,
       availableStudyTime: hours,
-      track: inferLearningTrack(goals, state.profile?.track),
+      track: selectedTrack === "data-science" || selectedTrack === "web-development" || selectedTrack === "product-design"
+        ? selectedTrack : inferLearningTrack(goals, state.profile?.track),
     };
     if (!profile.name || !profile.background || !profile.goals) {
       setError(
@@ -93,7 +95,7 @@ function ProfileFields() {
     try {
       const response = await requestPlanResponse(profile);
       if (generation !== requestGeneration.current) return;
-      setPlan(profile, response.plan, response.mode);
+      await setPlan(profile, response.plan, response.mode);
       router.push("/dashboard");
     } catch (cause) {
       if (generation !== requestGeneration.current) return;
@@ -139,6 +141,13 @@ function ProfileFields() {
               defaultValue={state.profile?.goals}
               placeholder="e.g. Use data to make better business decisions and move into an analyst role."
             />
+            <label className="field-label" htmlFor="learning-track">Learning track</label>
+            <select id="learning-track" name="track" className="learning-track-select" defaultValue={state.plan ? state.profile?.track : "auto"}>
+              <option value="auto">Choose from my goal</option>
+              <option value="data-science">Data science</option>
+              <option value="web-development">Web development</option>
+              <option value="product-design">Product design</option>
+            </select>
           </fieldset>
           <fieldset disabled={busy}>
             <legend>
@@ -242,7 +251,7 @@ function ProfileFields() {
           <div className="profile-submit">
             <div>
               <Icon name="lock" size={14} />
-              <span>Saved in this browser. No account needed.</span>
+              <span>Each learning path keeps its own lessons and progress.</span>
             </div>
             <button
               type="submit"
@@ -259,8 +268,7 @@ function ProfileFields() {
           </div>
           {state.plan && (
             <p className="field-hint">
-              Creating a new path replaces the current curriculum and resets its
-              progress in this browser.
+              Creating a new path keeps your other saved paths and their progress.
             </p>
           )}
         </form>
@@ -292,7 +300,7 @@ function ProfileFields() {
         <span className="eyebrow">GOOD TO KNOW</span>
         <p className="aside-small">
           Your goal shapes a path around your background and study time.
-          Your lessons and progress stay in this browser.
+          Sign in to save all your learning paths and progress to your account.
         </p>
       </aside>
     </div>

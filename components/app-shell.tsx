@@ -5,6 +5,7 @@ import { Brand } from "@/components/brand";
 import { ClaudeCredit } from "@/components/claude-credit";
 import { Icon } from "@/components/icon";
 import { useLearning } from "@/lib/learning-context";
+import { useAccount } from "@/lib/account-context";
 
 export function AppShell({
   children,
@@ -13,11 +14,12 @@ export function AppShell({
   title,
 }: {
   children: React.ReactNode;
-  active: "dashboard" | "learn" | "onboarding";
+  active: "dashboard" | "learn" | "onboarding" | "account";
   eyebrow?: string;
   title?: string;
 }) {
-  const { state, storageWarning } = useLearning();
+  const { state, storageWarning, syncStatus, syncError } = useLearning();
+  const { user } = useAccount();
   const completed =
     state.plan?.modules.filter((m) => m.status === "completed").length || 0;
   return (
@@ -37,7 +39,7 @@ export function AppShell({
             aria-current={active === "dashboard" ? "page" : undefined}
           >
             <Icon name="layers" />
-            My learning path
+            My learning paths
             <Icon className="nav-arrow" name="chevron-right" size={15} />
           </Link>
           <Link
@@ -52,6 +54,9 @@ export function AppShell({
             <Icon name="home" />
             Discover OwnPath
           </Link>
+          <Link href="/account" className={active === "account" ? "active" : ""} aria-current={active === "account" ? "page" : undefined}>
+            <Icon name="target" />{user ? "My account" : "Sign in / Create account"}
+          </Link>
         </nav>
         <div className="sidebar-note">
           <span className="sidebar-note-icon">
@@ -64,14 +69,14 @@ export function AppShell({
         </div>
         <div className="sidebar-footer">
           <span className="profile-avatar">
-            {(state.profile?.name || "L").charAt(0).toUpperCase()}
+            {(state.profile?.name || user?.name || "L").charAt(0).toUpperCase()}
           </span>
           <div>
-            <strong>{state.profile?.name || "Your next chapter"}</strong>
+            <strong>{state.profile?.name || user?.name || "Your next chapter"}</strong>
             <small>
               {state.profile
-                ? "Personal learning space"
-                : "Make yourself at home"}
+                ? user ? syncStatus === "syncing" ? "Saving to your account…" : "Account learning space" : "Saved in this browser"
+                : user ? "Signed in" : "Make yourself at home"}
             </small>
           </div>
         </div>
@@ -98,6 +103,7 @@ export function AppShell({
               {storageWarning}
             </div>
           )}
+          {syncError && <div className="storage-warning" role="status">{syncError} <Link href="/account">Manage saved progress</Link></div>}
           {children}
         </main>
         <footer className="app-footer">
