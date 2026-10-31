@@ -1,0 +1,21 @@
+node_modules/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.vercel/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.playwright/
+
+# Generated local framework declarations and agent guidance
+next-env.d.ts
+AGENTS.md
