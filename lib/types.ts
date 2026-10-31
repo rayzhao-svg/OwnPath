@@ -80,6 +80,44 @@ export interface QuizResult {
   totalQuestions: number;
   passed: boolean;
   completedAt: string;
+  /** Optional for compatibility with results saved before adaptive learning. */
+  answers?: Record<string, number>;
+  missedQuestionIds?: string[];
+}
+
+export interface QuizMistake {
+  questionId: string;
+  selectedAnswer: number;
+  concept: string;
+  slideId: string;
+}
+
+export interface ReviewRequest {
+  lesson: Lesson;
+  result: QuizResult;
+}
+export interface RemediationArea {
+  questionId: string;
+  concept: string;
+  slideId: string;
+  explanation: string;
+  workedExample: string;
+  steps: string[];
+}
+export interface Remediation {
+  lessonId: string;
+  moduleId: string;
+  attemptedAt: string;
+  summary: string;
+  areas: RemediationArea[];
+}
+export interface ReviewResponse {
+  review: Remediation;
+  mode: "mock" | "claude";
+  fallbackReason?: "generation-failed";
+}
+export interface SavedRemediation extends ReviewResponse {
+  reviewedAt?: string;
 }
 
 export interface TutorMessage {
@@ -127,7 +165,11 @@ export interface LearningState {
   profile: LearnerProfile | null;
   plan: StudyPlan | null;
   lessons: Record<string, Lesson>;
+  /** Best result; a later failed practice attempt never removes completion. */
   quizResults: Record<string, QuizResult>;
+  latestQuizResults?: Record<string, QuizResult>;
+  quizHistory?: Record<string, QuizResult[]>;
+  remediations?: Record<string, SavedRemediation>;
   /** Optional metadata keeps older version-1 browser stores compatible. */
   planMode?: PlanResponse["mode"];
   lessonModes?: Record<string, LessonResponse["mode"]>;

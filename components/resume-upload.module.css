@@ -1,0 +1,26 @@
+.panel {
+  border: 1px solid #dfe7d2;
+  border-radius: 9px;
+  background: #f3f6ed;
+  padding: 22px;
+  margin-bottom: 30px;
+  color: #536548;
+  min-width: 0;
+}
+.panel h2 { font-size: 18px; line-height: 1.5; letter-spacing: 0; }
+.panel h2 span { font-family: Arial, sans-serif; font-size: 11px; font-weight: 400; }
+.panel p, .panel li, .review p, .suggestion p { font-size: 12px; line-height: 1.7; margin: 10px 0; }
+.panel .privacy { color: #68775c; font-size: 11px; }
+.check { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; line-height: 1.6; cursor: pointer; margin: 15px 0 8px; }
+.panel .check input[type="checkbox"], .review .check input[type="checkbox"] { flex: 0 0 16px; width: 16px; height: 16px; padding: 0; margin-top: 2px; accent-color: #6c8653; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.panel button, .suggestion button { padding: 10px 14px; font-size: 11px; }
+.panel button:disabled, .suggestion button:disabled { opacity: .55; cursor: default; }
+.paste, .source { margin-top: 18px; font-size: 12px; }
+.paste summary, .source summary, .suggestion summary { cursor: pointer; line-height: 1.7; }
+.source pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; font: 11px/1.7 Arial, sans-serif; background: white; padding: 14px; margin-top: 12px; border-radius: 5px; }
+.suggestion { margin-top: 8px; padding: 10px 12px; background: #f3f6ed; border-radius: 5px; color: #536548; font-size: 11px; }
+.suggestion p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.review { background: #f3f6ed; border: 1px solid #dfe7d2; border-radius: 7px; padding: 6px 16px; margin: 22px 0; }
+.review p { color: #68775c; font-size: 11px; }
+@media (max-width: 600px) { .panel { padding: 16px; } }
